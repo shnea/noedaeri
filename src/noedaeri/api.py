@@ -201,6 +201,12 @@ def create_app(settings: Settings | None = None):
             for item in SERVICES.values()
         ]
 
+    @app.get("/api/integrations/guide")
+    def integration_guide(request: Request):
+        auth.user(request)
+        path = Path(__file__).resolve().parents[2] / "docs" / "SERVICE_INTEGRATION.md"
+        return FileResponse(path, media_type="text/markdown", filename="SERVICE_INTEGRATION.md")
+
     @app.get("/api/jobs")
     def jobs(request: Request, limit: int = 50):
         user = auth.user(request)

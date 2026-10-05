@@ -770,3 +770,60 @@ main {
   background: #a7b9af;
   border-color: #a7b9af;
 }
+
+.integration-guide {
+  max-width: 960px;
+  min-width: 0;
+}
+.guide-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+}
+.guide-document {
+  background: #fff;
+  border: 1px solid #cedcd5;
+  border-radius: 12px;
+  padding: 32px;
+  overflow-wrap: anywhere;
+}
+.guide-document h1 {
+  font-size: 26px;
+}
+.guide-document h2 {
+  font-size: 21px;
+  margin: 36px 0 16px;
+}
+.guide-document p,
+.guide-document li {
+  line-height: 1.8;
+  max-width: 75ch;
+}
+.guide-document table {
+  display: block;
+  overflow-x: auto;
+  margin: 20px 0;
+}
+.guide-document th,
+.guide-document td {
+  padding: 12px;
+  min-width: 140px;
+}
+.guide-document pre {
+  overflow-x: auto;
+  background: #eaf1ed;
+  padding: 16px;
+  line-height: 1.6;
+}
+.guide-document code {
+  font-size: 0.9em;
+}
+@media (max-width: 760px) {
+  .guide-document {
+    padding: 20px;
+  }
+  header nav {
+    flex-wrap: wrap;
+  }
+}

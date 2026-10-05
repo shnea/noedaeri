@@ -216,3 +216,19 @@ def test_execution_capacity_includes_input_files(app):
     source.parent.mkdir(parents=True)
     source.write_bytes(b"12345678901")
     assert not storage.available(None)
+
+
+def test_integration_guide_requires_current_approval(app):
+    client = app.state.client
+    assert client.get("/api/integrations/guide").status_code == 401
+    client, user = login(app, status="pending")
+    assert client.get("/api/integrations/guide").status_code == 403
+    with app.state.db.connect() as conn:
+        conn.execute("UPDATE users SET status='approved' WHERE id=%s", (user,))
+    response = client.get("/api/integrations/guide")
+    assert response.status_code == 200
+    from pathlib import Path
+
+    assert response.content == Path("docs/SERVICE_INTEGRATION.md").read_bytes()
+    assert "video.package" in response.text
+    assert "text/markdown" in response.headers["content-type"]
