@@ -53,7 +53,7 @@
         560
       ],
       "parameters": {
-        "jsCode": "// 분기 확인용 가상 요청입니다. 실제 입력을 연결할 때 이 노드를 교체하세요.\nconst samples = [\n  {\n    \"task_type\": \"blog.tags\",\n    \"prompt\": \"샘플 블로그 글에 태그를 붙여 주세요.\"\n  },\n  {\n    \"task_type\": \"blog.summary\",\n    \"prompt\": \"샘플 블로그 글을 요약해 주세요.\"\n  },\n  {\n    \"task_type\": \"portfolio.search\",\n    \"prompt\": \"박승현 님의 주요 경력과 기술 스택을 알려줘.\",\n    \"collection\": \"portfolio_bb033df08acca22d\",\n    \"project\": \"17f9fc61-f29e-445e-b8e6-abb77d05aaf1\",\n    \"environment\": \"1668501e-20b4-42e3-8aa9-75a2dff6e2cc\"\n  },\n  {\n    \"task_type\": \"ui.render\",\n    \"prompt\": \"샘플 UI 빌더에서 화면을 그려 주세요.\"\n  },\n  {\n    \"task_type\": \"comment.generate\",\n    \"prompt\": \"샘플 글의 댓글을 만들어 주세요.\"\n  },\n  {\n    \"task_type\": \"document.analyze\",\n    \"prompt\": \"샘플 문서를 분석해 주세요.\"\n  },\n  {\n    \"task_type\": \"code.analyze\",\n    \"prompt\": \"샘플 코드를 분석해 주세요.\"\n  },\n  {\n    \"task_type\": \"chat.general\",\n    \"prompt\": \"샘플 일반 질문입니다.\"\n  },\n  {\n    \"task_type\": \"future.task\",\n    \"prompt\": \"추가 작업 분기를 위한 샘플입니다.\"\n  }\n];\nreturn samples.map(json => ({ json }));"
+        "jsCode": "// 분기 확인용 가상 요청입니다.\nconst samples = [\n  {\n    \"task_type\": \"blog.tags\",\n    \"prompt\": \"샘플 블로그 글에 태그를 붙여 주세요.\"\n  },\n  {\n    \"task_type\": \"blog.summary\",\n    \"prompt\": \"샘플 블로그 글을 요약해 주세요.\"\n  },\n  {\n    \"task_type\": \"portfolio.search\",\n    \"prompt\": \"샘플 포트폴리오의 주요 경력과 기술을 알려 주세요.\",\n    \"collection\": \"portfolio\",\n    \"project\": \"sample-project\",\n    \"environment\": \"production\"\n  },\n  {\n    \"task_type\": \"ui.render\",\n    \"prompt\": \"샘플 화면을 만들어 주세요.\"\n  },\n  {\n    \"task_type\": \"comment.generate\",\n    \"prompt\": \"샘플 글의 댓글을 만들어 주세요.\"\n  },\n  {\n    \"task_type\": \"document.analyze\",\n    \"prompt\": \"샘플 문서를 분석해 주세요.\"\n  },\n  {\n    \"task_type\": \"code.analyze\",\n    \"prompt\": \"샘플 코드를 분석해 주세요.\"\n  },\n  {\n    \"task_type\": \"chat.general\",\n    \"prompt\": \"샘플 일반 질문입니다.\"\n  },\n  {\n    \"task_type\": \"future.task\",\n    \"prompt\": \"미등록 작업 분기 확인용 샘플입니다.\"\n  }\n];\nreturn samples.map(json => ({ json }));"
       }
     },
     {
@@ -347,7 +347,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://noedaeri.shnea.kr/api/ai/v1/indexing/search",
+        "url": "https://noedaeri.example/api/ai/v1/indexing/search",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -800,7 +800,8 @@
         "options": {}
       },
       "notes": "L1 등급 작업을 OpenRouter Free 모델로 실행합니다.",
-      "notesInFlow": true
+      "notesInFlow": true,
+      "onError": "continueErrorOutput"
     },
     {
       "id": "a1111111-1111-4000-8000-000000000001",
@@ -837,7 +838,8 @@
         "options": {}
       },
       "notes": "L2 등급 작업을 Groq Free 모델로 실행합니다.",
-      "notesInFlow": true
+      "notesInFlow": true,
+      "onError": "continueErrorOutput"
     },
     {
       "id": "a2222222-2222-4000-8000-000000000002",
@@ -874,7 +876,8 @@
         "options": {}
       },
       "notes": "L3 등급 작업을 Google AI Studio Gemini Free 모델로 실행합니다.",
-      "notesInFlow": true
+      "notesInFlow": true,
+      "onError": "continueErrorOutput"
     },
     {
       "id": "a3333333-3333-4000-8000-000000000003",
@@ -1060,7 +1063,8 @@
         "options": {}
       },
       "notes": "L1 소진 시 Mistral 직접 API 무료 모델로 폴백 실행합니다.",
-      "notesInFlow": true
+      "notesInFlow": true,
+      "onError": "continueErrorOutput"
     },
     {
       "id": "a4444444-4444-4000-8000-000000000004",
@@ -1092,7 +1096,7 @@
         560
       ],
       "parameters": {
-        "jsCode": "return $input.all().map((item, index) => {\n  let req = {};\n  try { req = $('요청 정규화').first()?.json || {}; } catch(e) {}\n  if (!req.task_type) { try { req = $('샘플 요청 8종 + 미등록').first()?.json || {}; } catch(e) {} }\n  \n  let raya = {};\n  try { raya = $('Raya 난이도 판단').first()?.json || {}; } catch(e) {}\n  \n  let rag = {};\n  try { rag = $('공통 컨텍스트 및 지침 합성').first()?.json || {}; } catch(e) {}\n  \n  const text = item.json.output || item.json.text || (typeof item.json === 'string' ? item.json : JSON.stringify(item.json));\n  const tier = raya.routing?.model_tier || 'L1';\n  \n  const providerMap = {\n    L1: { provider: 'openrouter', model: 'openrouter/free' },\n    L2: { provider: 'groq', model: 'openai/gpt-oss-120b' },\n    L3: { provider: 'google', model: 'models/gemini-3.8-flash' },\n    mistral: { provider: 'mistral', model: 'ministral-8b-latest' }\n  };\n  const providerInfo = providerMap[tier] || { provider: 'unknown', model: 'unknown' };\n  \n  const promptText = req.prompt || '';\n  const promptTokens = Math.max(1, Math.ceil(promptText.length / 4));\n  const completionTokens = Math.max(1, Math.ceil((text?.length || 0) / 4));\n  \n  return {\n    json: {\n      request_id: req.request_id || item.json.request_id || 'req-' + Date.now(),\n      task_type: req.task_type || item.json.task_type || 'chat.general',\n      project: req.project || item.json.project || 'default',\n      environment: req.environment || item.json.environment || 'production',\n      status: 'completed',\n      ai_result: text,\n      provider: providerInfo.provider,\n      model: providerInfo.model,\n      model_tier: tier,\n      usage: {\n        prompt_tokens: promptTokens,\n        completion_tokens: completionTokens,\n        total_tokens: promptTokens + completionTokens\n      },\n      routing: raya.routing || null,\n      retrieved_context: rag.retrieved_context || null\n    },\n    pairedItem: { item: index },\n  };\n});"
+        "jsCode": "return $input.all().map((item, index) => {\n  let req = {};\n  try { req = $('요청 정규화').first()?.json || {}; } catch(e) {}\n  if (!req.task_type) { try { req = $('샘플 요청 8종 + 미등록').first()?.json || {}; } catch(e) {} }\n  \n  let raya = {};\n  try { raya = $('Raya 난이도 판단').first()?.json || {}; } catch(e) {}\n  \n  let rag = {};\n  try { rag = $('공통 컨텍스트 및 지침 합성').first()?.json || {}; } catch(e) {}\n  \n  if (item.json.status === 'failed' && item.json.error_code) {\n    return {\n      json: {\n        request_id: req.request_id || item.json.request_id || 'req-' + Date.now(),\n        task_type: req.task_type || item.json.task_type || 'chat.general',\n        project: req.project || item.json.project || 'default',\n        environment: req.environment || item.json.environment || 'production',\n        status: 'failed',\n        error_code: item.json.error_code,\n        error_message: item.json.error_message,\n        ai_result: item.json.ai_result || null,\n        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n      },\n      pairedItem: { item: index }\n    };\n  }\n\n  const text = item.json.output || item.json.text || (typeof item.json === 'string' ? item.json : JSON.stringify(item.json));\n  \n  let tier = item.json.actual_tier;\n  if (!tier) {\n    try {\n      if ($('폴백 · Mistral Agent').isExecuted) tier = 'mistral';\n      else if ($('L1 · OpenRouter Agent').isExecuted) tier = 'L1';\n      else if ($('L2 · Groq Agent').isExecuted) tier = 'L2';\n      else if ($('L3 · Gemini Agent').isExecuted) tier = 'L3';\n    } catch (e) {}\n  }\n  if (!tier) {\n    tier = raya.model_tier || raya.routing?.model_tier || 'L1';\n  }\n  \n  const providerMap = {\n    L1: { provider: 'openrouter', model: 'openrouter/free' },\n    L2: { provider: 'groq', model: 'openai/gpt-oss-120b' },\n    L3: { provider: 'google', model: 'models/gemini-3.8-flash' },\n    mistral: { provider: 'mistral', model: 'ministral-8b-latest' }\n  };\n  const providerInfo = providerMap[tier] || { provider: 'unknown', model: 'unknown' };\n  \n  const promptText = req.prompt || '';\n  const promptTokens = Math.max(1, Math.ceil(promptText.length / 4));\n  const completionTokens = Math.max(1, Math.ceil((text?.length || 0) / 4));\n  \n  return {\n    json: {\n      request_id: req.request_id || item.json.request_id || 'req-' + Date.now(),\n      task_type: req.task_type || item.json.task_type || 'chat.general',\n      project: req.project || item.json.project || 'default',\n      environment: req.environment || item.json.environment || 'production',\n      status: 'completed',\n      ai_result: text,\n      provider: providerInfo.provider,\n      model: providerInfo.model,\n      model_tier: tier,\n      fallback_chain: item.json.fallback_chain || (item.json.fallback_from ? [item.json.fallback_from, tier] : null),\n      usage: {\n        prompt_tokens: promptTokens,\n        completion_tokens: completionTokens,\n        total_tokens: promptTokens + completionTokens\n      },\n      routing: raya.routing || null,\n      retrieved_context: rag.retrieved_context || null\n    },\n    pairedItem: { item: index },\n  };\n});"
       },
       "notes": "각 AI Agent의 실행 결과를 취합하여 표준 형식으로 정리합니다.",
       "notesInFlow": true
@@ -1107,9 +1111,54 @@
         1300
       ],
       "parameters": {
-        "jsCode": "return $input.all().map((item, index) => ({json: {...item.json, status: 'no_tokens_available', message: '현재 사용 가능한 AI 토큰이 없습니다. 한도 갱신 후 다시 시도해 주세요.'}, pairedItem: {item: index}}));"
+        "jsCode": "const req = $('요청 정규화').first()?.json || $('샘플 요청 8종 + 미등록').first()?.json || {};\nreturn [{\n  json: {\n    request_id: req.request_id || 'req-' + Date.now(),\n    task_type: req.task_type || 'chat.general',\n    project: req.project || 'default',\n    environment: req.environment || 'production',\n    status: 'failed',\n    error_code: 'all_providers_exhausted',\n    error_message: '모든 AI 공급자(L3 Gemini, L2 Groq, L1 OpenRouter, Mistral)의 응답 가용성이 소진되었습니다.',\n    ai_result: '현재 사용 가능한 AI 모델이 모두 소진되었거나 응답할 수 없습니다. 잠시 후 다시 시도해 주세요.'\n  }\n}];"
       },
-      "notes": "네 공급자를 한 번씩 확인해 소진을 확인한 경우에만 연결합니다. 현재 한도 조회가 없어 자동으로 이 분기를 선택하지 않습니다. 실제 서비스 응답 연결은 후속입니다.",
+      "notes": "공급자 실패 경로가 끝나면 실패 응답으로 종료합니다. 한도 조회는 없으며 일반 장애와 실제 토큰 소진을 구분해 확정할 수 없습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "f3b20001-0001-4000-8000-000000000001",
+      "name": "L3 폴백 → L2 전환",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        720
+      ],
+      "parameters": {
+        "jsCode": "const original = $('공통 컨텍스트 및 지침 합성').first()?.json || $('요청·판단 합치기').first()?.json || {};\nreturn [{\n  json: {\n    ...original,\n    actual_tier: 'L2',\n    fallback_from: 'L3',\n    fallback_chain: ['L3', 'L2'],\n    fallback_reason: $json.error?.message || 'L3 Gemini 장애로 L2 Groq 폴백'\n  }\n}];"
+      },
+      "notes": "L3 Gemini 실패 시 원본 문맥을 유지하며 L2 Groq 에이전트로 폴백 전환합니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "f3b20002-0002-4000-8000-000000000002",
+      "name": "L2 폴백 → L1 전환",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        480
+      ],
+      "parameters": {
+        "jsCode": "const original = $('공통 컨텍스트 및 지침 합성').first()?.json || $('요청·판단 합치기').first()?.json || {};\nconst prevChain = $json.fallback_chain || ['L2'];\nreturn [{\n  json: {\n    ...original,\n    actual_tier: 'L1',\n    fallback_from: 'L2',\n    fallback_chain: [...prevChain, 'L1'],\n    fallback_reason: $json.error?.message || 'L2 Groq 장애로 L1 OpenRouter 폴백'\n  }\n}];"
+      },
+      "notes": "L2 Groq 실패 시 원본 문맥을 유지하며 L1 OpenRouter 에이전트로 폴백 전환합니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "f3b20003-0003-4000-8000-000000000003",
+      "name": "L1 폴백 → Mistral 전환",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2460,
+        240
+      ],
+      "parameters": {
+        "jsCode": "const original = $('공통 컨텍스트 및 지침 합성').first()?.json || $('요청·판단 합치기').first()?.json || {};\nconst prevChain = $json.fallback_chain || ['L1'];\nreturn [{\n  json: {\n    ...original,\n    actual_tier: 'mistral',\n    fallback_from: 'L1',\n    fallback_chain: [...prevChain, 'mistral'],\n    fallback_reason: $json.error?.message || 'L1 OpenRouter 장애로 Mistral 폴백'\n  }\n}];"
+      },
+      "notes": "L1 OpenRouter 실패 시 원본 문맥을 유지하며 폴백 Mistral 에이전트로 전환합니다.",
       "notesInFlow": true
     }
   ],
@@ -1484,6 +1533,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "L1 폴백 → Mistral 전환",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -1492,6 +1548,13 @@
         [
           {
             "node": "AI 결과 정리",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "L2 폴백 → L1 전환",
             "type": "main",
             "index": 0
           }
@@ -1506,10 +1569,68 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "L3 폴백 → L2 전환",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
     "폴백 · Mistral Agent": {
+      "main": [
+        [
+          {
+            "node": "AI 결과 정리",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "모두 소진 · 토큰 없음 안내",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L3 폴백 → L2 전환": {
+      "main": [
+        [
+          {
+            "node": "L2 · Groq Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L2 폴백 → L1 전환": {
+      "main": [
+        [
+          {
+            "node": "L1 · OpenRouter Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "L1 폴백 → Mistral 전환": {
+      "main": [
+        [
+          {
+            "node": "폴백 · Mistral Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "모두 소진 · 토큰 없음 안내": {
       "main": [
         [
           {

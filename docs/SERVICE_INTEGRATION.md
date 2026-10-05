@@ -1,6 +1,6 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 13 · 기준일: 2026-10-06
+문서 버전: 14 · 기준일: 2026-10-06
 
 ## 현재 연결 가능한 범위
 
@@ -54,9 +54,9 @@ Raya 판단은 `routing` 아래 원래 요청과 합쳐 제공한다. HTTP 노�
 
 새 작업은 Switch에 `task_type` 규칙을 추가하고 지침 노드를 복제한 뒤 출력에 연결한다. 작업 종류는 모델 성능 등급과 별개다. 공급자 순서는 L1 OpenRouter `openrouter/free`, L2 GroqCloud `openai/gpt-oss-120b`, L3 Gemini `models/gemini-3.8-flash`, 폴백 Mistral `ministral-8b-latest`다.
 
-샘플은 n8n 편집 권한으로 수동 실행하며 자동 실행용 웹훅은 없다. 가져오기용 JSON에는 비밀키·실제 서버 주소·Credential ID가 없다. n8n HTTP 노드에 실제 뇌대리 주소와 아래 계약의 Header Auth를 선택한다. 실행 데이터 보관·삭제는 해당 n8n 인스턴스의 정책을 따르며 뇌대리 웹 테스트의 24시간 보관을 적용하지 않는다. 실제 AI 답변의 호출 한도·결과 수령·학습 데이터 보존 계약은 후속 범위다.
+샘플은 n8n 편집 권한으로 수동 실행하거나 웹훅 접수 노드로 요청을 받는다. 웹훅 공개 주소와 접근 제어는 n8n 배포 설정에서 관리한다. 가져오기용 JSON에는 비밀키·실제 서버 주소·Credential ID가 없다. n8n HTTP 노드에 실제 뇌대리 주소와 아래 계약의 Header Auth를 선택한다. 실행 데이터 보관·삭제는 해당 n8n 인스턴스의 정책을 따르며 뇌대리 웹 테스트의 24시간 보관을 적용하지 않는다. 실제 AI 답변의 호출 한도·결과 수령·학습 데이터 보존 계약은 후속 범위다.
 
-### 3단계 공급자와 순환 대체
+### 3단계 공급자와 하향 폴백
 
 | 단계 | 지정 공급자 | 초안 상태 |
 |---|---|---|
@@ -65,21 +65,11 @@ Raya 판단은 `routing` 아래 원래 요청과 합쳐 제공한다. HTTP 노�
 | L3 | Google AI Studio `models/gemini-3.8-flash` | n8n LangChain 모델 연결 |
 | 폴백 | Mistral 직접 API `ministral-8b-latest` | n8n LangChain 모델 연결 |
 
-Raya가 L1~L3 중 하나를 직접 판단하며, 초안의 `provider_plan`은 선택 단계부터 **L3→L2→L1→Mistral 폴백→L3** 순환 순서로 후보를 준비한다. 시작별 후보는 다음과 같다.
+Raya가 L1~L3 중 시작 등급을 판단한다. 실제 에이전트 실패 경로는 **L3 → L2 → L1 → Mistral → 실패 종료**로 연결한다. L2에서 시작하면 L2 → L1 → Mistral, L1에서 시작하면 L1 → Mistral을 시도한다. 성공하면 결과 정리로 이동하며 자동으로 상위 등급이나 유료 모델을 다시 호출하지 않는다. `provider_plan`의 순환 후보 목록은 참고 정보이며 실제 에러 분기는 위 하향 순서다.
 
-| 시작 | 한 바퀴의 후보 순서 |
-|---|---|
-| L3 | L3 → L2 → L1 → Mistral |
-| L2 | L2 → L1 → Mistral → L3 |
-| L1 | L1 → Mistral → L3 → L2 |
+각 에이전트의 `onError: continueErrorOutput` 오류 출력을 다음 공급자 전환 노드에 연결한다. 전환 노드는 원래 요청·지침·검색 문맥을 유지한다. 결과 정리는 최종 실행 공급자를 기준으로 provider·model·model_tier를 표시한다. 현재 토큰 수는 텍스트 길이 기반 추정치이며 공급자의 실제 청구 토큰 수가 아니다.
 
-Mistral은 L1 다음 순서이며 기본 3개를 모두 확인한 뒤에만 사용하도록 제한하지 않는다. 한 요청에서 각 공급자는 한 번씩, 최대 4개 공급자를 확인한다. 실제 호출 단계는 `selected_level: null`, 한도 조회는 `quota_status: "not_connected"`로 표시하며 모든 단계를 사용할 수 있다고 가정하지 않는다.
-
-`공급자 경로 · 한도 연결 대기`는 `route_target`의 `primary`·`mistral`·`no_tokens`를 각각 기본 단계·Mistral 폴백·소진 안내로 연결한다. 현재는 한도 조회가 미구현이므로 `primary`만 준비하며 폴백과 소진 안내를 실제로 선택하지 않는다. 향후 확인된 한도 소진 시 순환 순서의 다음 공급자로 이동한다. 이미지·도구·구조화 출력 등 필수 기능을 지원하지 않는 후보는 사용할 수 없다. 기능 미지원·인증 실패·알 수 없는 한도를 토큰 소진으로 표시하지 않는다. 한 바퀴를 확인해 네 공급자가 모두 소진됐으면 `exhausted_action: "notify_no_tokens"`에 따라 “현재 사용 가능한 AI 토큰이 없습니다. 한도 갱신 후 다시 시도해 주세요.”라고 안내하고 종료한다. 같은 소진 상태로 무한 재호출하거나 자동 유료 호출하지 않는다.
-
-Mistral은 Raya의 추가 등급이 아니라 L1 다음에 확인하는 별도의 폴백이다. OpenRouter를 통한 Mistral 모델 호출과 구분해 직접 API를 사용할 계획이며 계정의 무료 모드·실제 모델 접근·사용량·한도를 연결 시 확인한다. Mistral의 무료 모드도 한도가 있다. [Mistral 사용량·한도 문서](https://docs.mistral.ai/admin/billing-usage/usage-limits)를 따른다.
-
-분당 한도·일일/월간 한도는 갱신 시각과 함께 구분할 계획이다. 사용량 보고 누락만으로 잔여 한도를 안다고 간주하지 않는다. 인증 오류·입력 오류·일반 서버 장애를 한도 소진으로 오인해 반복 호출하지 않는다. 실제 한도 판독·소진 안내·순환 대체 공급자 호출은 아직 구현하지 않았다. usage에는 추천 단계·최종 단계·대체 사유와 각 실제 호출을 구분해 남기도록 설계한다.
+Mistral까지 실패하면 `status: failed`와 `error_code: all_providers_exhausted`를 반환한다. 이 코드명은 현재 워크플로의 종료 식별자이며 실제 한도 소진을 확정하는 증거가 아니다. 인증·입력 오류·일반 서버 장애도 에이전트 실패 분기로 전달될 수 있다. 공급자별 잔여 한도 판독·필수 기능 호환성 검사는 아직 구현하지 않았다. 무한 폴백이나 동일 공급자 자동 재호출은 하지 않는다. Raya 및 검색 HTTP 호출 자체가 실패하면 에이전트 폴백에 도달하기 전에 n8n 실행이 실패할 수 있다.
 
 ### 이미지 여부와 결과 캐시
 
@@ -99,7 +89,7 @@ Mistral은 Raya의 추가 등급이 아니라 L1 다음에 확인하는 별도�
 | `blog.summary` | 동일한 점유·캐시·저장 흐름. 결과의 `summary`는 비어 있지 않은 문자열이며 최대 500자다. |
 | `comment.generate` | 원문의 target·thread·memory·말투 문맥과 작업 지침을 유지한다. 기존 출력의 `comment` 계약과 추가 필드·길이 검증 범위는 연결 전에 확정한다. 현재 JSON 객체 검사만으로 완전한 댓글 검증이 된다고 간주하지 않는다. |
 | `ui.render` | `messages`·이미지 참조 → 도구를 사용하는 AI Agent → `{reply,imageFileId}` 응답. MCP의 실제 컴포넌트·템플릿·디자인 문맥, 읽기 전용 권한, revision 충돌 검사, 사용자 검토 후 적용할 변경 제안을 유지한다. |
-| `portfolio.search` 등 RAG | **공통 RAG 연동**: 사용자 질의 수신 → Google Gemini 임베딩(`models/gemini-embedding-001`) + 공통 Qdrant 벡터 검색(동적 컬렉션: `portfolio`, `document` 등) → 작업별 문맥 결합 및 지침(`instruction`) 합성 → Raya 난이도 평가(L1/L2/L3) → n8n 모델 호출 → 결과 반환. |
+| `portfolio.search` 등 RAG | **공통 RAG 연동**: 사용자 질의 수신 → 뇌대리 검색 API의 Google Gemini 임베딩(`models/gemini-embedding-001`, 768차원) + PostgreSQL 문서 벡터 검색(동적 컬렉션: `portfolio`, `document` 등) → 작업별 문맥 결합 및 지침(`instruction`) 합성 → Raya 난이도 평가(L1/L2/L3) → n8n 모델 호출 → 결과 반환. |
 | 나머지 3종 | 문서·코드·일반 질답 지침과 결과 계약은 후속으로 제공한다. 기존 기능의 지침을 자동 복제하지 않는다. |
 
 블로그 작업은 캐시 적중 시 Raya와 실제 모델을 호출하지 않는다. 실패 기록과 기존 오류 응답도 유지한다. `hash`는 기존 중복 처리용 값이며 여러 서비스의 공통 요청 식별자로 바로 대체하지 않는다. UI 빌더에서는 현재 Agent·MCP 흐름을 기준으로 연결하고 사용되지 않는 별도 HTTP 노드를 추가 호출 경로로 오인하지 않는다.
@@ -201,7 +191,7 @@ Raya에는 현재 사용자 요청과 필요한 텍스트 문맥을 전달하고
 - n8n 실행: `/api/ai/v1/indexing` 계열 + `X-Noedaeri-Raya-Key`. n8n의 Header Auth 자격증명에 실행 키를 저장한다. n8n 관리 API 키를 요청이나 예제에 넣지 않는다.
 - 웹: `/api/ai/indexing` 계열 + 승인된 웹 세션. 변경 요청에는 동일 출처와 CSRF 토큰이 필요하다.
 - 문서 저장·검색·교체·삭제 범위는 `(owner_id, project, environment, collection)`이다. 플랫폼과 n8n 실행 키는 플랫폼 서비스 소유자에만 접근하며 웹 사용자의 문서를 조회하지 않는다. 일반 웹 사용자는 자신의 작업·컬렉션만 조회한다. 관리자는 전체 작업 이력과 컬렉션 통계를 조회하고 대기 작업을 취소할 수 있다. 신규 인덱싱 테스트는 로그인한 소유자 범위이며, 관리자 검색은 선택한 소유자 범위를 지원한다.
-- `project`, `environment`, `collection`은 각각 최대 64자다. 검색의 기본 프로젝트는 `default`, 환경은 `production`, 컬렉션은 `portfolio`이며 다른 범위를 자동 합쳐 검색하지 않는다.
+- `project`와 `environment`는 각각 최대 128자, `collection`은 최대 256자다. 검색의 기본 프로젝트는 `default`, 환경은 `production`, 컬렉션은 `portfolio`다. 같은 소유자·프로젝트·환경 안에서 컬렉션 `name`과 `platform_<하이픈을 제거한 project>_<하이픈을 제거한 environment>_name`을 함께 조회한다. 다른 소유자·프로젝트·환경은 합치지 않는다.
 
 #### 인덱싱 접수 (`POST /api/v1/ai/indexing`)
 
