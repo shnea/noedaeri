@@ -44,6 +44,11 @@ class RouteResult(BaseModel):
     runtime: Literal["onnx-fp32"]
 
 
+class RouteResponse(RouteResult):
+    elapsed_ms: float = Field(ge=0, allow_inf_nan=False)
+    cold_start: bool
+
+
 class RayaError(Exception):
     def __init__(self, code):
         self.code = code
@@ -284,7 +289,7 @@ class Raya:
             self.lock.release()
 
 
-def install_raya_routes(app, settings, auth, raya, db):
+def install_raya_routes(app, settings, auth, raya, db, principal):
     import secrets
 
     slots = asyncio.Semaphore(2)
@@ -314,8 +319,30 @@ def install_raya_routes(app, settings, auth, raya, db):
 
     @app.post("/api/raya/route")
     @app.post("/api/ai/v1/raya/route")
+    @app.post(
+        "/api/v1/ai/raya/route",
+        response_model=RouteResponse,
+        summary="플랫폼 요청의 Raya 난이도 판단",
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {"application/json": {"schema": RouteInput.model_json_schema()}},
+                "description": "최대 64KiB. 동기 판단만 수행하며 AI 답변은 생성하지 않습니다.",
+            },
+        },
+        responses={
+            401: {"description": "기존 플랫폼 키가 없거나 올바르지 않음"},
+            413: {"description": "요청 본문 64KiB 초과"},
+            422: {"description": "잘못된 요청 형식"},
+            429: {"description": "동시 요청 또는 대기 한도 초과"},
+            503: {"description": "모델 비활성·자원 부족·실행 실패"},
+            504: {"description": "로딩 포함 추론 제한시간 초과"},
+        },
+    )
     async def route(request: Request):
-        if request.url.path.startswith("/api/ai/v1/"):
+        if request.url.path.startswith("/api/v1/"):
+            principal(request)
+        elif request.url.path.startswith("/api/ai/v1/"):
             if not settings.raya_key or not secrets.compare_digest(
                 request.headers.get("X-Noedaeri-Raya-Key", "").encode(), settings.raya_key.encode()
             ):

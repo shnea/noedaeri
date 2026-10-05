@@ -596,8 +596,8 @@
         -440
       ],
       "parameters": {
-        "content": "## AI 작업 분기 + Raya 난이도 판단\n수동 실행하면 가상 요청 8종과 미등록 요청 1종이 각 분기로 나뉩니다.\n각 **지침 대기** 노드의 `instruction`은 비워 두었습니다. 작업별 지침을 받은 뒤 채웁니다.\n\n### 연결 상태\n실제 Raya CPU 추론 → L1 / L2 / L3 분기까지 연결했습니다.\nL1 OpenRouter `openrouter/free` → L2 Groq Free → L3 Gemini Free.\nL3→L2→L1→Mistral 폴백→L3 순환입니다. L1부터는 L1→폴백→L3→L2입니다. 네 공급자를 한 번씩 확인해 모두 소진이면 토큰이 없다고 안내하고 종료합니다. 현재는 후보 준비만 연결했습니다.\n**실제 AI 답변·검색·화면 생성·학습 데이터 수집은 아직 없습니다.**\nRaya는 최대 512토큰만 분석하며 긴 입력은 `routing.input_truncated`로 표시합니다.\n\n### 새 작업 추가\nSwitch에서 `task_type` 규칙 추가 → 지침 노드 복제 → 출력 연결.\n미등록 작업은 마지막 분기로 보내며 Raya를 호출하지 않습니다.\n가져오기 후 Raya HTTP 노드에 서버 주소와 Header Auth Credential을 선택하세요. 키는 노드 본문에 넣지 않습니다.",
-        "height": 530,
+        "content": "## AI 작업 분기 + Raya 난이도 판단\n수동 실행하면 가상 요청 8종과 미등록 요청 1종이 각 분기로 나뉩니다.\n각 **지침 대기** 노드의 `instruction`은 비워 두었습니다. 작업별 지침을 받은 뒤 채웁니다.\n\n### 연결 상태\n실제 Raya CPU 추론 → L1 / L2 / L3 분기까지 연결했습니다.\nL1 OpenRouter `openrouter/free` → L2 Groq Free → L3 Gemini Free.\nL3→L2→L1→Mistral 폴백→L3 순환입니다. L1부터는 L1→폴백→L3→L2입니다. 네 공급자를 한 번씩 확인해 모두 소진이면 토큰이 없다고 안내하고 종료합니다. 현재는 후보 준비만 연결했습니다.\n**실제 AI 답변·검색·화면 생성·학습 데이터 수집은 아직 없습니다.**\nRaya는 최대 512토큰만 분석하며 긴 입력은 `routing.input_truncated`로 표시합니다.\n\n### 새 작업 추가\nSwitch에서 `task_type` 규칙 추가 → 지침 노드 복제 → 출력 연결.\n미등록 작업은 마지막 분기로 보내며 Raya를 호출하지 않습니다.\n가져오기 후 Raya HTTP 노드에 서버 주소와 Header Auth Credential을 선택하세요. 키는 노드 본문에 넣지 않습니다.\n\n### 플랫폼 진입점\n외부 서비스 → 플랫폼 → 뇌대리 → n8n. 플랫폼은 기존 파일서비스 키(X-Noedaeri-API-Key)를 재사용합니다. 이 수동 초안의 작업 접수·실행 API는 아직 없습니다. n8n의 Raya 전용 키는 실행 중 내부 판단용이며 외부 앱에 배포하지 않습니다.",
+        "height": 680,
         "width": 680
       }
     },

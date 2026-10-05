@@ -192,7 +192,6 @@ def create_app(settings: Settings | None = None):
     app.state.db, app.state.queue, app.state.storage = db, queue, storage
     app.state.webhooks = webhooks
     app.state.raya = raya
-    install_raya_routes(app, settings, auth, raya, db)
 
     def principal(request):
         if request.url.path.startswith("/api/v1/"):
@@ -203,6 +202,8 @@ def create_app(settings: Settings | None = None):
                 raise HTTPException(401, "platform_key_required")
             return {"id": PLATFORM_OWNER, "role": "service"}
         return auth.user(request)
+
+    install_raya_routes(app, settings, auth, raya, db, principal)
 
     def present(job):
         data = public_job(job)

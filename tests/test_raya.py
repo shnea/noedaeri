@@ -196,6 +196,45 @@ def test_route_auth_limits_and_role_separation(app, fake_runtime):
     assert client.post("/api/raya/route", json=PAYLOAD).status_code == 403
 
 
+def test_platform_routing_reuses_existing_key_without_internal_or_session_access(app, fake_runtime):
+    app.state.raya.settings = replace(
+        app.state.settings,
+        raya_enabled=True,
+        raya_timeout=2,
+        raya_model_root=fake_runtime / "model",
+    )
+    client, _ = login(app)
+    path = "/api/v1/ai/raya/route"
+    assert client.post(path, json=PAYLOAD).status_code == 401
+    assert (
+        client.post(
+            path, json=PAYLOAD, headers={"X-Noedaeri-Raya-Key": app.state.settings.raya_key}
+        ).status_code
+        == 401
+    )
+    for key in ("incorrect", app.state.settings.worker_key):
+        assert (
+            client.post(path, json=PAYLOAD, headers={"X-Noedaeri-API-Key": key}).status_code
+            == 401
+        )
+    headers = {"X-Noedaeri-API-Key": app.state.settings.integration_key}
+    client.cookies.clear()
+    client.headers.pop("X-CSRF-Token", None)
+    response = client.post(path, json=PAYLOAD, headers=headers)
+    assert response.status_code == 200 and response.json()["model_tier"] == "L1"
+    assert (
+        client.post(path, json=dict(PAYLOAD, has_images=True), headers=headers).status_code == 200
+    )
+    assert client.post(path, content=b"x" * 65537, headers=headers).status_code == 413
+    assert client.get("/api/admin/raya/status", headers=headers).status_code == 401
+    spec = client.get("/integrations/openapi.json").json()
+    operation = spec["paths"][path]["post"]
+    assert spec["security"] == [{"PlatformKey": []}]
+    assert operation["requestBody"]["content"]["application/json"]["schema"]["properties"]
+    assert operation["responses"]["200"]["content"]["application/json"]["schema"]
+    assert "/api/ai/v1/raya/route" not in spec["paths"]
+
+
 def test_admin_policy_persists_and_release_reaps(app, fake_runtime):
     client, _ = login(app, role="admin")
     app.state.raya.settings = replace(
