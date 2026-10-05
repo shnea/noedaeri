@@ -55,3 +55,20 @@ CREATE TABLE IF NOT EXISTS raya_policy (
  minimum_keep_seconds integer NOT NULL CHECK(minimum_keep_seconds BETWEEN 0 AND 86400),
  idle_seconds integer NOT NULL CHECK(idle_seconds BETWEEN 1 AND 86400)
 );
+
+CREATE TABLE IF NOT EXISTS ai_cache (
+ key text PRIMARY KEY, response jsonb NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ai_cache_expiry ON ai_cache(expires_at);
+CREATE TABLE IF NOT EXISTS ai_usage (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ service text NOT NULL, task_type text NOT NULL, request_id text,
+ recommended_tier text, raya_error text, final_slot text, provider text, model text,
+ status text NOT NULL CHECK(status IN ('succeeded','cache_hit','exhausted','failed')),
+ cache_hit boolean NOT NULL DEFAULT false,
+ input_tokens integer, output_tokens integer,
+ latency_ms integer NOT NULL, attempts jsonb NOT NULL DEFAULT '[]', error_code text
+);
+CREATE INDEX IF NOT EXISTS ai_usage_created ON ai_usage(created_at DESC);

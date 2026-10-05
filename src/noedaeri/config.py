@@ -35,6 +35,20 @@ class Settings:
     raya_wait: int = 5
     raya_timeout: int = 90
     raya_memory_reserve: int = 3 * 1024**3
+    openrouter_key: str = ""
+    groq_key: str = ""
+    gemini_key: str = ""
+    mistral_key: str = ""
+    ai_l1_model: str = "openrouter/free"
+    ai_l1_vision_model: str = "openrouter/free"
+    ai_l2_model: str = "openai/gpt-oss-120b"
+    ai_l2_vision_model: str = "qwen/qwen3.8-27b"
+    ai_l3_model: str = "gemini-flash-latest"
+    ai_l3_vision_model: str = "gemini-flash-latest"
+    ai_fallback_model: str = "ministral-8b-latest"
+    ai_fallback_vision_model: str = "ministral-8b-latest"
+    ai_cache_ttl: int = 86400
+    ai_timeout: int = 90
 
     @classmethod
     def from_env(cls):
@@ -51,6 +65,26 @@ class Settings:
             raya_wait=int(os.environ.get("RAYA_WAIT_SECONDS", "5")),
             raya_timeout=int(os.environ.get("RAYA_TIMEOUT_SECONDS", "90")),
             raya_memory_reserve=int(os.environ.get("RAYA_MEMORY_RESERVE_BYTES", str(3 * 1024**3))),
+            openrouter_key=os.environ.get("OPENROUTER_API_KEY", ""),
+            groq_key=os.environ.get("GROQ_API_KEY", ""),
+            gemini_key=os.environ.get("GEMINI_API_KEY", ""),
+            mistral_key=os.environ.get("MISTRAL_API_KEY", ""),
+            **{
+                field: os.environ[name]
+                for field, name in (
+                    ("ai_l1_model", "AI_L1_MODEL"),
+                    ("ai_l1_vision_model", "AI_L1_VISION_MODEL"),
+                    ("ai_l2_model", "AI_L2_MODEL"),
+                    ("ai_l2_vision_model", "AI_L2_VISION_MODEL"),
+                    ("ai_l3_model", "AI_L3_MODEL"),
+                    ("ai_l3_vision_model", "AI_L3_VISION_MODEL"),
+                    ("ai_fallback_model", "AI_FALLBACK_MODEL"),
+                    ("ai_fallback_vision_model", "AI_FALLBACK_VISION_MODEL"),
+                )
+                if name in os.environ
+            },
+            ai_cache_ttl=int(os.environ.get("AI_CACHE_TTL_SECONDS", "86400")),
+            ai_timeout=int(os.environ.get("AI_TIMEOUT_SECONDS", "90")),
             video_encoder=os.environ.get("FFMPEG_VIDEO_ENCODER") or "auto",
             integration_key=os.environ.get("NOEDAERI_PLATFORM_API_KEY", ""),
             webhook_url=os.environ.get("NOEDAERI_PLATFORM_WEBHOOK_URL", ""),
@@ -80,6 +114,8 @@ class Settings:
             and settings.raya_memory_reserve >= 1024**3
         ):
             raise ValueError("Invalid Raya execution policy")
+        if not (0 <= settings.ai_cache_ttl <= 2592000 and 5 <= settings.ai_timeout <= 300):
+            raise ValueError("Invalid AI cache retention or timeout")
         if settings.upload_limit <= 0 or settings.storage_limit <= settings.upload_limit:
             raise ValueError("Storage capacity must exceed the positive upload limit")
         if settings.integration_key and len(settings.integration_key) < 32:

@@ -315,6 +315,9 @@ def serve(component):
             "--config",
             "config/runtime.enc.env",
         ]
+        if component == "api" and (ROOT / "config/ai-providers.enc.env").exists():
+            # Provider keys stay out of the worker process.
+            args += ["--config", "config/ai-providers.enc.env"]
     os.chdir(ROOT)
     os.execvpe(args[0], args, env)
 
