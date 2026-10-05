@@ -18,7 +18,7 @@ npm ci --prefix web
 npm run build --prefix web
 ```
 
-개인키는 저장소 밖 기본 SOPS 위치에서 읽는다. `config/platform.enc.env`는 플랫폼 설정, `config/n8n.enc.env`는 별도 연동 키다. 실제 값을 문서·예제·소스에 붙여 넣지 않는다.
+개인키는 저장소 밖 기본 SOPS 위치에서 읽는다. `config/platform.enc.env`는 플랫폼 설정, `config/n8n.enc.env`는 별도 연동 키, `config/ai-providers.enc.env`는 AI 공급자 키(`OPENROUTER_API_KEY`·`GROQ_API_KEY`·`GEMINI_API_KEY`·`MISTRAL_API_KEY`)다. 공급자 키는 아직 실행 경로에 연결되지 않았다. 실제 값을 문서·예제·소스에 붙여 넣지 않는다.
 
 ## 네이티브 운영
 
