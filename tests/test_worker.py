@@ -16,27 +16,32 @@ from conftest import login
 from test_jobs import new_job
 
 
-@pytest.mark.parametrize("kind", ["video.thumbnail", "video.package"])
+@pytest.mark.parametrize("kind", ["video.thumbnail", "video.package", "image.package"])
 def test_worker_process_calls_api_and_finishes(app, kind):
     client, _ = login(app)
     job_id = new_job(client, kind=kind).json()["id"]
     source = app.state.storage.root / "sample.mp4"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-v",
-            "error",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=c=green:s=1280x720:d=7",
-            "-c:v",
-            "libx264",
-            "-y",
-            str(source),
-        ],
-        check=True,
-    )
+    if kind == "image.package":
+        from PIL import Image
+
+        Image.new("RGBA", (1800, 1200), (20, 90, 60, 100)).save(source, format="PNG")
+    else:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=c=green:s=1280x720:d=7",
+                "-c:v",
+                "libx264",
+                "-y",
+                str(source),
+            ],
+            check=True,
+        )
     assert (
         client.put(
             f"/api/jobs/{job_id}/input",
@@ -83,6 +88,24 @@ def test_worker_process_calls_api_and_finishes(app, kind):
         if kind == "video.thumbnail":
             assert job["result"]["type"] == "artifact"
             assert client.get(f"/api/jobs/{job_id}/result").content.startswith(b"\xff\xd8")
+        elif kind == "image.package":
+            result = job["result"]
+            assert result["type"] == "image_package"
+            assert result["preview"]["width"] == 1600
+            base = f"/api/jobs/{job_id}/files/"
+            assert client.get(base + "preview.webp").headers["content-type"] == "image/webp"
+            assert client.get(base + "metadata.json").json() == result
+            archive = zipfile.ZipFile(io.BytesIO(client.get(f"/api/jobs/{job_id}/result").content))
+            assert set(archive.namelist()) == {"thumbnail.jpg", "preview.webp", "metadata.json"}
+            login(app)
+            assert client.get(base + "preview.webp").status_code == 404
+            with app.state.db.connect() as conn:
+                conn.execute(
+                    "UPDATE jobs SET expires_at=%s WHERE id=%s",
+                    (datetime.now(UTC) - timedelta(seconds=1), UUID(job_id)),
+                )
+            app.state.storage.cleanup(app.state.db)
+            assert not (settings.storage_root / "results" / job_id).exists()
         else:
             result = job["result"]
             assert result["type"] == "video_package"

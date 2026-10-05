@@ -1,13 +1,16 @@
+import json
 import logging
 import os
 import signal
+import sys
 import time
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import httpx
 
 from .config import Settings
-from .media import JobCancelled, MediaError, thumbnail, video_package
+from .media import JobCancelled, MediaError, run_process, thumbnail, video_package
 from .storage import Storage
 
 
@@ -34,7 +37,7 @@ def run():
                     "/internal/claim",
                     json={
                         "worker_id": str(worker_id),
-                        "kinds": ["video.thumbnail", "video.package"],
+                        "kinds": ["video.thumbnail", "video.package", "image.package"],
                     },
                 )
                 response.raise_for_status()
@@ -80,7 +83,24 @@ def run():
                     job_id = UUID(job["id"])
                     source = storage.path("uploads", job_id, "input")
                     output = storage.path("results", job_id, "thumbnail.jpg")
-                    if job["kind"] == "video.package":
+                    if job["kind"] == "image.package":
+                        stage("image_processing")
+                        raw = run_process(
+                            [
+                                sys.executable,
+                                str(Path(__file__).with_name("images.py")),
+                                str(source),
+                                str(output.parent),
+                                job["input"]["extension"],
+                            ],
+                            60,
+                            capacity_alive,
+                            capture=True,
+                        )
+                        result = json.loads(raw)
+                        if "error" in result:
+                            raise MediaError(result["error"])
+                    elif job["kind"] == "video.package":
                         result = video_package(
                             source,
                             output.parent,

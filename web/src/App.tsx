@@ -49,6 +49,17 @@ function Status({ value }: { value: string }) {
 }
 
 function Details({ job, cancel }: { job: Job; cancel: () => void }) {
+  const imagePackage = z
+    .object({
+      type: z.literal("image_package"),
+      source: z.object({
+        format: z.string(),
+        width: z.number(),
+        height: z.number(),
+      }),
+    })
+    .safeParse(job.result);
+
   const videoPackage = z
     .object({
       type: z.literal("video_package"),
@@ -60,6 +71,7 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
     ? `${job.stage.slice(9)} 영상 변환 중`
     : new Map([
         ["thumbnail", "썸네일 생성 중"],
+        ["image_processing", "이미지 검사·썸네일·미리보기 생성 중"],
         ["packaging", "결과 묶음 생성 중"],
       ]).get(job.stage);
 
@@ -170,6 +182,40 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
                 variants={videoPackage.data.variants}
               />
             )}
+            {imagePackage.success && (
+              <>
+                <a
+                  className="result-preview"
+                  href={`/api/jobs/${job.id}/files/preview.webp`}
+                >
+                  <img
+                    src={`/api/jobs/${job.id}/files/preview.webp`}
+                    alt="생성된 이미지 미리보기"
+                  />
+                </a>
+                <p>
+                  {imagePackage.data.source.format} ·{" "}
+                  {imagePackage.data.source.width} ×{" "}
+                  {imagePackage.data.source.height}
+                </p>
+                <div className="guide-actions">
+                  <a
+                    className="button"
+                    href={`/api/jobs/${job.id}/files/thumbnail.jpg`}
+                    download
+                  >
+                    JPEG 썸네일
+                  </a>
+                  <a
+                    className="button"
+                    href={`/api/jobs/${job.id}/files/preview.webp`}
+                    download
+                  >
+                    WebP 미리보기
+                  </a>
+                </div>
+              </>
+            )}
             {imageResult && (
               <a className="result-preview" href={`/api/jobs/${job.id}/result`}>
                 <img
@@ -180,6 +226,7 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
             )}
             {!artifact.success &&
               !videoPackage.success &&
+              !imagePackage.success &&
               job.result !== null &&
               job.result !== undefined && (
                 <pre className="json-result">
@@ -187,7 +234,9 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
                 </pre>
               )}
             <a className="button" href={`/api/jobs/${job.id}/result`} download>
-              결과 다운로드
+              {imagePackage.success || videoPackage.success
+                ? "전체 ZIP 다운로드"
+                : "결과 다운로드"}
             </a>
             <p>삭제 예정 {date(job.expires_at)}</p>
           </>
@@ -249,8 +298,14 @@ function NewTask({
             kind,
             title,
             idempotency_key: key,
-            input: { type: service.input_type },
-            options: { seconds },
+            input:
+              kind === "image.package"
+                ? {
+                    type: service.input_type,
+                    extension: file.name.split(".").pop()?.toLowerCase(),
+                  }
+                : { type: service.input_type },
+            options: kind === "image.package" ? {} : { seconds },
           }),
         ),
       );
@@ -294,7 +349,10 @@ function NewTask({
           <select
             disabled={submitted}
             value={kind}
-            onChange={(event) => setKind(event.target.value)}
+            onChange={(event) => {
+              setKind(event.target.value);
+              setFile(null);
+            }}
           >
             {services.map((item) => (
               <option key={item.kind} value={item.kind}>
@@ -316,12 +374,17 @@ function NewTask({
         </label>
         {service?.input_type === "upload" && (
           <label>
-            입력 영상
+            {kind === "image.package" ? "입력 이미지" : "입력 영상"}
             <input
+              key={kind}
               disabled={submitted}
               type="file"
               required
-              accept="video/mp4,video/quicktime,video/webm,video/x-matroska"
+              accept={
+                kind === "image.package"
+                  ? ".png,.jpg,.jpeg,.jfif,.gif,.webp,.bmp,.ico,.tif,.tiff,.heic,.heif,.avif"
+                  : "video/mp4,video/quicktime,video/webm,video/x-matroska"
+              }
               onChange={(event) => setFile(event.target.files?.item(0) ?? null)}
             />
           </label>
@@ -341,6 +404,12 @@ function NewTask({
           </label>
         )}
       </div>
+      {kind === "image.package" && (
+        <p>
+          이미지 최대 32MB·4천만 화소. 첫 프레임을 사용하고 원본은 결과에
+          포함하지 않습니다.
+        </p>
+      )}
       <p>웹 테스트 결과는 생성 완료 후 24시간 보관됩니다.</p>
       {submitted && (
         <p>

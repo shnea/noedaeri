@@ -15,8 +15,11 @@ def new_job(client, key=None, title="테스트 작업", kind="video.thumbnail"):
             "kind": kind,
             "title": title,
             "idempotency_key": str(key or uuid4()),
-            "input": {"type": "upload"},
-            "options": {"seconds": 0},
+            "input": {
+                "type": "upload",
+                **({"extension": "png"} if kind == "image.package" else {}),
+            },
+            "options": {} if kind == "image.package" else {"seconds": 0},
         },
     )
 

@@ -6,7 +6,7 @@
 
 FastAPI가 인증·승인·작업 등록·조회·임시 저장을 담당한다. PostgreSQL이 작업과 사용자·세션을 영속 저장한다. FFmpeg 워커는 독립 프로세스로 실행되며 HTTP API로 작업을 가져온다. API와 워커는 현재 같은 호스트의 저장 루트를 공유한다. 원격 PC 워커의 입력 전송은 아직 구현하지 않았다.
 
-웹은 실제 등록된 서비스만 보여준다. 현재 서비스는 `video.thumbnail`과 `video.package`다. TTS·임베딩·STT·n8n 워크플로 실행은 이후 추가한다. 입력 타입과 옵션은 작업 유형에 종속되며 향후 서비스 추가 시 전용 입력 폼도 추가한다.
+웹은 실제 등록된 서비스만 보여준다. 현재 서비스는 `image.package`, `video.thumbnail`, `video.package`다. TTS·임베딩·STT·n8n 워크플로 실행은 이후 추가한다. 입력 타입과 옵션은 작업 유형에 종속되며 향후 서비스 추가 시 전용 입력 폼도 추가한다.
 
 ## 작업 수명주기
 
@@ -51,3 +51,11 @@ H.264/AAC, 30fps, 6초 단위 MPEG-TS VOD 구성이다. 해상도별 변환은 �
 결과 JSON은 `type=video_package`, `master`, `thumbnail`, `download`, `variants`, `files`를 제공한다. 파일명은 상대 이름만 사용한다. `GET /api/jobs/{id}/files/{filename}`은 매 요청 로그인·현재 승인·소유권·만료·파일 목록을 확인한다. `/result`는 전체 ZIP을 반환한다. 모든 결과는 웹 테스트의 24시간 보존 정책을 따른다.
 
 웹은 HLS 지원 브라우저에서 자동·수동 화질을 제공한다. 브라우저 네이티브 HLS 사용 시 수동 변경은 재생 주소를 전환하고 재생 위치를 복구한다. 플레이어가 없는 브라우저는 다운로드 안내를 표시한다. 외부 파일 서비스 등록 API와 서비스별 호출 키는 별도 후속 작업이다.
+
+## 이미지 처리 프로세스
+
+이미지는 FFmpeg와 별개인 Pillow 12.3.0 + pillow-heif 1.8.0 프로세스로 처리한다. 고정된 Python 실행 파일과 인자를 사용하며 키·DB 환경을 상속하지 않는다. 관리 워커의 heartbeat는 계속 유지하고 취소·점유 상실 시 자식 프로세스 그룹을 종료한다. CPU·출력 파일 크기·벽시계 제한, 디코딩 전 바이트·화소·변 길이 제한을 함께 적용한다. OS 메모리 격리나 모든 악성 코덱 입력에 대한 보호를 보장하는 샌드박스는 아니다.
+
+ICC 색상 변환 뒤 EXIF·ICC 등 원본 부가정보를 제거한다. 원본의 실제 형식과 명시한 확장자를 대조하고 JPG·HEIF 같은 동의 확장자를 허용한다. 원본 파일명·원본 파일을 결과에 복제하지 않는다. 이미지마다 출력 2MB를 넘으면 실패 처리한다. 깨진 형식·프로필 등 디코더 오류는 민감한 진단 없이 unsupported_media로 보고한다.
+
+참고 구현 계약: [Pillow 이미지 포맷](https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html), [pillow-heif 플러그인](https://pillow-heif.readthedocs.io/en/stable/pillow-plugin.html). 실제 지원 여부는 설치된 코덱에 대한 프로젝트 테스트 결과를 따른다.

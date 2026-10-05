@@ -301,7 +301,10 @@ def create_app(settings: Settings | None = None):
                         if shutil.disk_usage(storage.root).free < settings.free_floor + len(chunk):
                             raise HTTPException(507, "storage_capacity_exceeded")
                         size += len(chunk)
-                        if size > settings.upload_limit:
+                        if size > min(
+                            settings.upload_limit,
+                            32_000_000 if job["kind"] == "image.package" else settings.upload_limit,
+                        ):
                             raise HTTPException(413, "upload_too_large")
                         target.write(chunk)
                 if not size:
@@ -339,9 +342,9 @@ def create_app(settings: Settings | None = None):
         ):
             raise HTTPException(410, "result_unavailable")
         service = SERVICES[job["kind"]]
-        if job["kind"] == "video.package":
+        if job["kind"] in {"video.package", "image.package"}:
             manifest = job["result"] or {}
-            name = filename or "video.zip"
+            name = filename or ("image.zip" if job["kind"] == "image.package" else "video.zip")
             if name not in manifest.get("files", []):
                 raise HTTPException(404, "result_missing")
             try:
@@ -354,6 +357,8 @@ def create_app(settings: Settings | None = None):
                 ".m3u8": "application/vnd.apple.mpegurl",
                 ".ts": "video/mp2t",
                 ".jpg": "image/jpeg",
+                ".webp": "image/webp",
+                ".json": "application/json",
                 ".zip": "application/zip",
             }.get(path.suffix)
             return FileResponse(
@@ -429,15 +434,22 @@ def create_app(settings: Settings | None = None):
             if not job:
                 raise HTTPException(404, "job_not_found")
             service = SERVICES[job["kind"]]
-            if job["kind"] == "video.package":
-                if not isinstance(result_data, dict) or result_data.get("type") != "video_package":
+            if job["kind"] in {"video.package", "image.package"}:
+                if not isinstance(result_data, dict) or result_data.get("type") != job[
+                    "kind"
+                ].replace(".", "_"):
                     raise HTTPException(409, "result_missing")
                 files = result_data.get("files", [])
-                if not isinstance(files, list) or not {
-                    "master.m3u8",
-                    "thumbnail.jpg",
-                    "video.zip",
-                }.issubset(files):
+                required = (
+                    {"thumbnail.jpg", "preview.webp", "metadata.json", "image.zip"}
+                    if job["kind"] == "image.package"
+                    else {"master.m3u8", "thumbnail.jpg", "video.zip"}
+                )
+                if (
+                    not isinstance(files, list)
+                    or not all(isinstance(name, str) for name in files)
+                    or not required.issubset(files)
+                ):
                     raise HTTPException(409, "result_missing")
                 try:
                     if not all(storage.path("results", job_id, name).is_file() for name in files):

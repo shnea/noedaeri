@@ -16,6 +16,28 @@ class ThumbnailOptions(BaseModel):
     seconds: float = Field(default=0, ge=0, le=3600, allow_inf_nan=False)
 
 
+class ImageInput(UploadInput):
+    extension: Literal[
+        "png",
+        "jpg",
+        "jpeg",
+        "jfif",
+        "gif",
+        "webp",
+        "bmp",
+        "ico",
+        "tif",
+        "tiff",
+        "heic",
+        "heif",
+        "avif",
+    ]
+
+
+class ImageOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
 @dataclass(frozen=True)
 class Service:
     kind: str
@@ -29,6 +51,14 @@ class Service:
 
 
 SERVICES = {
+    "image.package": Service(
+        "image.package",
+        "image",
+        "이미지 통합 처리 · 썸네일 + WebP 미리보기",
+        "upload",
+        ImageOptions,
+        input_model=ImageInput,
+    ),
     "video.package": Service(
         "video.package",
         "ffmpeg",
