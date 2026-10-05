@@ -15,8 +15,8 @@ class Settings:
     redirect_uri: str = ""
     admin_issuer: str = ""
     admin_subject: str = ""
-    upload_limit: int = 512 * 1024 * 1024
-    storage_limit: int = 5 * 1024 * 1024 * 1024
+    upload_limit: int = 5 * 1024 * 1024 * 1024
+    storage_limit: int = 20 * 1024 * 1024 * 1024
     free_floor: int = 2 * 1024 * 1024 * 1024
     job_timeout: int = 120
     video_timeout: int = 1800
@@ -34,6 +34,8 @@ class Settings:
             webhook_url=os.environ.get("NOEDAERI_PLATFORM_WEBHOOK_URL", ""),
             webhook_secret=os.environ.get("NOEDAERI_PLATFORM_WEBHOOK_SECRET", ""),
             platform_result_ttl=int(os.environ.get("PLATFORM_RESULT_TTL_SECONDS", "604800")),
+            upload_limit=int(os.environ.get("UPLOAD_MAX_BYTES", str(5 * 1024**3))),
+            storage_limit=int(os.environ.get("STORAGE_MAX_BYTES", str(20 * 1024**3))),
             database_url=os.environ["DATABASE_URL"],
             worker_key=os.environ["WORKER_API_KEY"],
             public_origin=os.environ["PUBLIC_ORIGIN"].rstrip("/"),
@@ -44,6 +46,8 @@ class Settings:
             admin_issuer=os.environ.get("ADMIN_OIDC_ISSUER", ""),
             admin_subject=os.environ.get("ADMIN_OIDC_SUBJECT", ""),
         )
+        if settings.upload_limit <= 0 or settings.storage_limit <= settings.upload_limit:
+            raise ValueError("Storage capacity must exceed the positive upload limit")
         if settings.integration_key and len(settings.integration_key) < 32:
             raise ValueError("Platform API key must contain at least 32 characters")
         if settings.webhook_secret and len(settings.webhook_secret) < 32:

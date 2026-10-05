@@ -138,9 +138,7 @@ def start_component(component):
 
 
 def stop_component(component):
-    result = execute(
-        ["launchctl", "print", domain() + "/" + label(component)], required=False
-    )
+    result = execute(["launchctl", "print", domain() + "/" + label(component)], required=False)
     if result.returncode:
         return
     match = re.search(r"^\s*pid = (\d+)\s*$", result.stdout.decode(), re.MULTILINE)
@@ -269,7 +267,7 @@ http {{
   proxy_temp_path {quote(state / "nginx-proxy")};
   server {{
     listen {int(values["INGRESS_PORT"])};
-    client_max_body_size 512m;
+    client_max_body_size {int(values.get("UPLOAD_MAX_BYTES", 5 * 1024**3))};
     client_body_timeout 30s;
     location ^~ /internal/ {{ return 404; }}
     location = /openapi.json {{ return 404; }}
@@ -280,7 +278,8 @@ http {{
       proxy_set_header X-Forwarded-Proto $scheme;
       proxy_request_buffering off;
       proxy_buffering off;
-      proxy_read_timeout 180s;
+      proxy_read_timeout 3600s;
+      proxy_send_timeout 60s;
     }}
   }}
 }}

@@ -235,3 +235,49 @@ def test_integration_guide_requires_current_approval(app):
     assert response.content == Path("docs/SERVICE_INTEGRATION.md").read_bytes()
     assert "video.package" in response.text
     assert "text/markdown" in response.headers["content-type"]
+
+
+def test_upload_exact_limit_and_overflow_cleanup(app):
+    client, _ = login(app)
+    first = new_job(client).json()
+    limit = app.state.settings.upload_limit
+    payload = b"x" * limit
+    headers = {"Content-Type": "application/octet-stream"}
+    assert (
+        client.put(f"/api/jobs/{first['id']}/input", content=payload, headers=headers).status_code
+        == 200
+    )
+    second = new_job(client).json()
+    url = f"/api/jobs/{second['id']}/input"
+    response = client.put(url, content=payload + b"x", headers=headers)
+    assert response.status_code == 413
+    assert not app.state.storage.path("uploads", UUID(second["id"]), "input").exists()
+    assert client.put(url, content=b"retry", headers=headers).status_code == 200
+
+
+def test_large_upload_defaults_and_proxy_agree(tmp_path):
+    import importlib.util
+    from pathlib import Path
+
+    from noedaeri.config import Settings
+
+    settings = Settings(
+        database_url="unused",
+        worker_key="unused",
+        public_origin="https://example.invalid",
+        storage_root=tmp_path,
+    )
+    assert settings.upload_limit == 5 * 1024**3
+    assert settings.storage_limit == 20 * 1024**3
+    spec = importlib.util.spec_from_file_location("manage_fixture", Path("scripts/manage.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    path = module.nginx_config(
+        {
+            "STATE_ROOT": str(tmp_path),
+            "INGRESS_PORT": "12345",
+            "WORKER_API_ORIGIN": "http://127.0.0.1:8000",
+        }
+    )
+    assert "client_max_body_size 5368709120;" in path.read_text()
+    assert "proxy_read_timeout 3600s;" in path.read_text()

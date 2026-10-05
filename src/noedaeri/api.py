@@ -436,10 +436,7 @@ def create_app(settings: Settings | None = None):
                         if shutil.disk_usage(storage.root).free < settings.free_floor + len(chunk):
                             raise HTTPException(507, "storage_capacity_exceeded")
                         size += len(chunk)
-                        if size > min(
-                            settings.upload_limit,
-                            32_000_000 if job["kind"] == "image.package" else settings.upload_limit,
-                        ):
+                        if size > settings.upload_limit:
                             raise HTTPException(413, "upload_too_large")
                         target.write(chunk)
                 if not size:
