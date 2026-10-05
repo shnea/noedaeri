@@ -2,6 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { z } from "zod";
 import { IntegrationGuide } from "./IntegrationGuide";
+import { RayaPanel } from "./RayaPanel";
 import { VideoResult } from "./VideoResult";
 import {
   jobSchema,
@@ -708,7 +709,7 @@ export default function App() {
 
   const tabs =
     user?.role === "admin"
-      ? ["작업", "서비스", "연동 지침", "워커", "사용자"]
+      ? ["작업", "서비스", "Raya", "연동 지침", "워커", "사용자"]
       : ["작업", "서비스", "연동 지침"];
 
   return (
@@ -812,11 +813,13 @@ export default function App() {
                     ? "요청한 작업의 대기, 실행, 결과를 한곳에서 확인합니다."
                     : tab === "서비스"
                       ? "현재 실행할 수 있는 작업 종류입니다."
-                      : tab === "연동 지침"
-                        ? "기능별 호출 방법과 현재 연결 가능한 범위를 확인합니다."
-                        : tab === "워커"
-                          ? "워커의 마지막 연결 상태를 확인합니다."
-                          : "플랫폼으로 로그인한 사용자의 접근을 관리합니다."}
+                      : tab === "Raya"
+                        ? "요청 난이도 판단과 모델 실행 정책을 확인합니다."
+                        : tab === "연동 지침"
+                          ? "기능별 호출 방법과 현재 연결 가능한 범위를 확인합니다."
+                          : tab === "워커"
+                            ? "워커의 마지막 연결 상태를 확인합니다."
+                            : "플랫폼으로 로그인한 사용자의 접근을 관리합니다."}
                 </p>
               </div>
               {tab === "작업" && (
@@ -832,6 +835,9 @@ export default function App() {
               )}
             </div>
             {tab === "연동 지침" && <IntegrationGuide />}
+            {tab === "Raya" && user.role === "admin" && (
+              <RayaPanel key={user.id} csrf={user.csrf} />
+            )}
             {creating && tab === "작업" && (
               <NewTask
                 key={retryJob?.id ?? "new"}

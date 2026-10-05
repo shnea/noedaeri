@@ -27,10 +27,30 @@ class Settings:
     webhook_secret: str = ""
     platform_result_ttl: int = 604800
     video_encoder: str = "auto"
+    raya_enabled: bool = False
+    raya_key: str = ""
+    raya_model_root: Path = Path(__file__).resolve().parents[2] / "models/raya"
+    raya_minimum_keep: int = 60
+    raya_idle: int = 300
+    raya_wait: int = 5
+    raya_timeout: int = 90
+    raya_memory_reserve: int = 3 * 1024**3
 
     @classmethod
     def from_env(cls):
         settings = cls(
+            raya_enabled=os.environ.get("RAYA_ENABLED", "0") == "1",
+            raya_key=os.environ.get("NOEDAERI_RAYA_API_KEY", ""),
+            raya_model_root=Path(
+                os.environ.get(
+                    "RAYA_MODEL_ROOT", str(Path(__file__).resolve().parents[2] / "models/raya")
+                )
+            ).resolve(),
+            raya_minimum_keep=int(os.environ.get("RAYA_MINIMUM_KEEP_SECONDS", "60")),
+            raya_idle=int(os.environ.get("RAYA_IDLE_SECONDS", "300")),
+            raya_wait=int(os.environ.get("RAYA_WAIT_SECONDS", "5")),
+            raya_timeout=int(os.environ.get("RAYA_TIMEOUT_SECONDS", "90")),
+            raya_memory_reserve=int(os.environ.get("RAYA_MEMORY_RESERVE_BYTES", str(3 * 1024**3))),
             video_encoder=os.environ.get("FFMPEG_VIDEO_ENCODER") or "auto",
             integration_key=os.environ.get("NOEDAERI_PLATFORM_API_KEY", ""),
             webhook_url=os.environ.get("NOEDAERI_PLATFORM_WEBHOOK_URL", ""),
@@ -50,6 +70,16 @@ class Settings:
         )
         if settings.video_encoder not in {"auto", "libx264", "h264_videotoolbox"}:
             raise ValueError("Unsupported FFMPEG_VIDEO_ENCODER")
+        if settings.raya_enabled and len(settings.raya_key) < 32:
+            raise ValueError("Raya requires a dedicated API key of at least 32 characters")
+        if not (
+            0 <= settings.raya_minimum_keep <= 86400
+            and 1 <= settings.raya_idle <= 86400
+            and 1 <= settings.raya_wait <= 30
+            and 5 <= settings.raya_timeout <= 180
+            and settings.raya_memory_reserve >= 1024**3
+        ):
+            raise ValueError("Invalid Raya execution policy")
         if settings.upload_limit <= 0 or settings.storage_limit <= settings.upload_limit:
             raise ValueError("Storage capacity must exceed the positive upload limit")
         if settings.integration_key and len(settings.integration_key) < 32:

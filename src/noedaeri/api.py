@@ -3,6 +3,7 @@ import json
 import secrets
 import shutil
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -24,6 +25,7 @@ from .db import Database
 from .execution import execution_lock
 from .integration import PLATFORM_OWNER, Webhooks
 from .queue import Queue
+from .raya import Raya, install_raya_routes
 from .services import SERVICES
 from .storage import Storage
 
@@ -113,6 +115,12 @@ def create_app(settings: Settings | None = None):
     queue = Queue(db, settings.lease_seconds, settings.result_ttl, settings.platform_result_ttl)
     auth = Auth(settings, db)
     webhooks = Webhooks(db, settings)
+    raya = Raya(settings)
+
+    async def release_raya():
+        while True:
+            await asyncio.sleep(5)
+            await asyncio.to_thread(raya.reap_idle)
 
     async def deliver():
         while True:
@@ -143,6 +151,14 @@ def create_app(settings: Settings | None = None):
     async def lifespan(app):
         db.migrate()
         with db.connect() as conn:
+            policy = conn.execute("SELECT * FROM raya_policy WHERE singleton=true").fetchone()
+        if policy:
+            raya.settings = replace(
+                raya.settings,
+                raya_minimum_keep=policy["minimum_keep_seconds"],
+                raya_idle=policy["idle_seconds"],
+            )
+        with db.connect() as conn:
             conn.execute(
                 "INSERT INTO users(id,issuer,subject,status,role) "
                 "VALUES(%s,'urn:noedaeri:service','platform','approved','user') "
@@ -151,9 +167,16 @@ def create_app(settings: Settings | None = None):
             )
         task = asyncio.create_task(maintenance())
         delivery_task = asyncio.create_task(deliver())
+        raya_task = asyncio.create_task(release_raya())
         yield
         task.cancel()
         delivery_task.cancel()
+        raya_task.cancel()
+        try:
+            await raya_task
+        except asyncio.CancelledError:
+            pass
+        await asyncio.to_thread(raya.close)
         try:
             await task
         except asyncio.CancelledError:
@@ -168,6 +191,8 @@ def create_app(settings: Settings | None = None):
     )
     app.state.db, app.state.queue, app.state.storage = db, queue, storage
     app.state.webhooks = webhooks
+    app.state.raya = raya
+    install_raya_routes(app, settings, auth, raya, db)
 
     def principal(request):
         if request.url.path.startswith("/api/v1/"):

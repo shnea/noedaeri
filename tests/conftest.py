@@ -28,6 +28,7 @@ def app(tmp_path):
         public_origin="https://testserver",
         storage_root=Path(tmp_path),
         integration_key=secrets.token_urlsafe(32),
+        raya_key=secrets.token_urlsafe(32),
         webhook_secret=secrets.token_urlsafe(32),
         webhook_url="https://receiver.example/completion",
         free_floor=0,

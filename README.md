@@ -57,7 +57,24 @@ API는 빌드된 `web/dist`를 함께 제공한다. 초기 관리자 설정이 �
 
 ## n8n 분기 초안
 
-n8n의 AI 작업 분기 초안은 [워크플로 JSON](examples/n8n_ai_routing_sample.json)을 가져와 확인할 수 있다. 수동 실행으로 8개 작업과 미등록 작업을 분기하며, 각 작업의 `instruction`은 추후 지침을 입력하도록 비워 두었다. Raya·AI 호출·학습·관리자 데이터 연동은 아직 연결하지 않았다. [입력과 확장 방법](docs/SERVICE_INTEGRATION.md#n8n-ai-작업-분기-초안)을 참고한다.
+n8n의 AI 작업 분기는 [워크플로 JSON](examples/n8n_ai_routing_sample.json)을 가져와 확인할 수 있다. 수동 실행으로 8개 작업과 미등록 작업을 분기하며, 각 작업의 `instruction`은 추후 지침을 입력하도록 비워 두었다. Raya CPU 추론 뒤 L1·L2·L3·L4로 분기한다. 실제 AI 공급자 호출·학습 데이터 수집·파인튜닝은 후속 범위다. 가져오기용 JSON에는 예시 주소만 있으므로 서버 주소와 전용 Header Auth Credential을 선택한다. [연동 계약](docs/SERVICE_INTEGRATION.md#raya-난이도-판단-api)을 참고한다.
+
+### Raya 설치와 실행
+
+Raya는 API의 Python 환경과 분리한 Python 3.12 환경에서 공식 Laya + ONNX Runtime으로 실행한다. 모델은 `models/raya/`에 저장하며 Git과 임시 파일 정리 대상에서 제외한다. 설치 버전은 별도 lockfile로 고정하고, 모델 리비전과 공식 SHA256을 확인한다.
+
+```sh
+uv sync --project raya_runtime --locked --python 3.12
+raya_runtime/.venv/bin/python scripts/install_raya.py
+```
+
+암호화 운영 설정에서 `RAYA_ENABLED=1`, 32자 이상 전용 `NOEDAERI_RAYA_API_KEY`를 설정하고 API를 재시작한다. 키는 플랫폼·워커·n8n 관리 키와 분리한다. n8n 연결 설정의 `N8N_ORIGIN`, `N8N_RAYA_WORKFLOW_ID`와 관리 API 키 `NOEDAERI_API_KEY`는 `config/n8n.enc.env`로 관리한다. 기존 비활성 초안에 아래 명령으로 추론 단계를 연결하며, 만든 n8n Credential의 ID도 암호화 저장한다. 원본 작업 지침과 샘플 입력은 보존한다. 활성 워크플로는 수정하지 않는다.
+
+```sh
+.venv/bin/python scripts/connect_raya_n8n.py
+```
+
+추론 요청이 들어오면 자격증명을 상속하지 않는 별도 프로세스로 모델을 로딩한다. 기본 최소 유지 60초·유휴 해제 300초이며, 관리자 **Raya** 메뉴에서 시간 정책 저장·메모리 해제·상태 조회·한국어 요청 테스트를 제공한다. 저장한 시간 정책은 DB에 영속 보관하고 환경 기본값보다 우선한다. 대기 5초·로딩 포함 제한 90초·로딩 전 여유 메모리 3GiB는 암호화 운영 설정으로 조정한다. 다른 서비스와의 시스템 메모리 예약 통합은 아직 없으며 OS의 실제 여유 메모리를 확인한다. 요청·결과를 학습 데이터로 자동 저장하지 않는다.
 
 ## 검사
 

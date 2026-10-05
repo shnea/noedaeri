@@ -49,3 +49,9 @@ CREATE TABLE IF NOT EXISTS deliveries (
  last_attempt_at timestamptz, next_attempt_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS deliveries_pending ON deliveries(next_attempt_at) WHERE state='pending';
+
+CREATE TABLE IF NOT EXISTS raya_policy (
+ singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
+ minimum_keep_seconds integer NOT NULL CHECK(minimum_keep_seconds BETWEEN 0 AND 86400),
+ idle_seconds integer NOT NULL CHECK(idle_seconds BETWEEN 1 AND 86400)
+);

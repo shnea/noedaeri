@@ -484,6 +484,40 @@ footer {
 .service-list section {
   padding: 12px 0 24px;
 }
+.raya-panel section + section {
+  border-top: 1px solid var(--line);
+  padding-top: 28px;
+}
+.raya-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.raya-prompt textarea {
+  width: 100%;
+  max-width: 72ch;
+  padding: 12px;
+  font: inherit;
+  color: var(--ink);
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  resize: vertical;
+}
+.raya-prompt textarea:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+.raya-result {
+  margin-top: 28px;
+}
+.raya-result table {
+  min-width: 0;
+}
+.raya-result td:first-child {
+  min-width: 0;
+  width: auto;
+}
 .error-banner {
   display: flex;
   justify-content: space-between;
@@ -830,4 +864,12 @@ main {
 
 .platform-delivery {
   margin-top: 24px;
+}
+.raya-image {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.raya-image input {
+  width: auto;
 }

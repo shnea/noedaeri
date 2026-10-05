@@ -73,6 +73,23 @@ export type Worker = z.infer<typeof workerSchema>;
 
 const messages = new Map(
   Object.entries({
+    raya_key_required: "Raya 연결 키를 확인해 주세요.",
+    raya_not_configured:
+      "Raya가 활성화되지 않았습니다. 관리자에게 연결 설정을 확인해 주세요.",
+    raya_busy: "다른 요청이 Raya를 사용 중입니다. 잠시 후 다시 시도해 주세요.",
+    raya_timeout:
+      "Raya 로딩·추론 제한시간을 초과했습니다. 잠시 후 다시 요청해 주세요.",
+    raya_memory_unavailable:
+      "모델을 로딩할 여유 메모리가 부족합니다. 다른 작업을 종료한 뒤 다시 시도해 주세요.",
+    raya_loading_failed:
+      "Raya 모델을 로딩하지 못했습니다. 관리자에게 설치 상태를 확인해 주세요.",
+    raya_inference_failed:
+      "Raya 추론에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+    raya_process_failed:
+      "Raya 실행이 중단됐습니다. 관리자에게 모델 상태를 확인해 주세요.",
+    raya_request_too_large:
+      "Raya 요청 크기가 한도를 초과했습니다. 입력을 줄여 주세요.",
+    invalid_raya_request: "요청 유형과 분석할 내용을 확인해 주세요.",
     approval_required: "관리자 승인이 필요합니다.",
     login_required: "로그인이 만료됐습니다. 다시 로그인해 주세요.",
     storage_capacity_exceeded:
