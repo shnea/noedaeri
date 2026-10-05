@@ -26,6 +26,7 @@ from .execution import execution_lock
 from .integration import PLATFORM_OWNER, Webhooks
 from .queue import Queue
 from .raya import Raya, install_raya_routes
+from .embeddings import install_embedding_routes
 from .services import SERVICES
 from .storage import Storage
 
@@ -204,6 +205,7 @@ def create_app(settings: Settings | None = None):
         return auth.user(request)
 
     install_raya_routes(app, settings, auth, raya, db, principal)
+    install_embedding_routes(app, settings, auth, principal)
 
     def present(job):
         data = public_job(job)

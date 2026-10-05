@@ -17,9 +17,10 @@
 | 통합 영상 처리 | `video.package` | 썸네일·해상도별 HLS·ZIP 생성 가능 |
 | 플랫폼 서버 인증·요청 | `/api/v1/` | 전용 키 인증 구현, 수신 주소 설정 후 접수 |
 | 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
-| TTS·고자원 임베딩 관리 | 미정 | 고자원 관리 워커 미구현 (경량 임베딩은 n8n 연동) |
+| 공통 텍스트 임베딩 | `/api/v1/ai/embeddings` | 플랫폼 키·AI 키·웹 세션 인증, 단일/배치 고성능 임베딩(768차원 등) 동기 API 구현 완료 |
+| TTS·고자원 모델 관리 | 미정 | 고자원 관리 워커 미구현 (경량 임베딩은 자체 API 및 n8n 연동) |
 | Raya 난이도 판단 | 동기 JSON | 기존 플랫폼 키·n8n 실행 키·웹 세션 API, CPU 추론·3등급 분기 구현 |
-| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업·미등록 분기, 포트폴리오 RAG(임베딩·벡터 검색) → Raya → 3등급 분기 → LangChain 모델 연결 완료 |
+| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업·미등록 분기, 포트폴리오 RAG(공통 임베딩·벡터 검색) → Raya → 3등급 분기 → LangChain 모델 연결 완료 |
 | 포트폴리오 데이터 인덱싱 예제 | 수동/웹훅 | 포트폴리오 문서 분할·임베딩·Qdrant 벡터 저장소 인덱싱 파이프라인 워크플로 예제 제공 |
 | 공통 AI 사용량 관리 | 뇌대리 usage | 연결 설계만 반영. 수집·저장·조회 API 미구현 |
 
@@ -435,6 +436,8 @@ if (job.status === 'uploading') {
 | `GET /api/v1/jobs/{id}/result` | 단일 JPEG 또는 통합 ZIP |
 | `GET /api/v1/jobs/{id}/files/{name}` | manifest에 기재된 통합 결과 파일, 인증 필요 |
 | `POST /api/v1/jobs/{id}/receipt` | `{ "event_id": "<terminal_event_id>" }`, 저장·등록 완료 확인 |
+| `POST /api/v1/ai/embeddings` | `{ "input": "텍스트" \| ["텍스트1", "텍스트2"], "dimensions": 768 }`, 공통 고성능 임베딩 벡터 생성 |
+| `POST /api/v1/ai/raya/route` | `{ "task_type": "...", "prompt": "..." }`, 플랫폼 요청의 Raya 난이도 판단 |
 
 1. 플랫폼 DB에 원본 file ID·변환 generation·새 요청 UUID를 기록하고 접수합니다. 제목에는 비밀값·내부 경로를 넣지 않습니다.
 2. 응답의 job ID를 저장하고 원본을 업로드합니다. 같은 접수의 재전송은 동일 요청 키·내용을 유지합니다. 업로드 응답이 유실되면 개별 조회로 `uploading`인지 확인한 후 재전송합니다.
@@ -482,6 +485,42 @@ JSON 재직렬화 후 서명을 계산하지 않습니다. 서명을 constant-ti
 전송 시도는 요청별 네트워크 단계 제한 5초, 자동 최대 8회입니다. 실패 후 30·60·120·240·480·960·1920초 간격으로 재시도합니다. 2xx만 성공이며 3xx/4xx/5xx·통신 실패 모두 제한적으로 재시도합니다. 프로세스가 수신 성공 직후 종료되면 같은 알림이 다시 도착할 수 있습니다. 응답 본문은 저장·로그 출력하지 않습니다.
 
 웹 관리자는 플랫폼 작업을 조회·취소하고 전달 상태와 시도 수를 확인할 수 있습니다. 실패한 알림의 **완료 알림 다시 전송**은 같은 이벤트를 다시 예약하며 변환을 재실행하지 않습니다. 관리자 API는 `POST /api/admin/jobs/{id}/webhook-retry`이며 웹 세션·CSRF가 필요합니다. 플랫폼 결과 저장 확인 시 알림 상태는 `acknowledged`로 바뀌고 추가 자동 전송을 중지합니다.
+
+### 공통 AI 임베딩 API v1
+
+플랫폼 및 외부 서비스가 텍스트의 고차원 벡터 임베딩을 직접 생성할 수 있는 공통 동기 엔드포인트를 제공합니다.
+
+- **엔드포인트**: `POST /api/v1/ai/embeddings`
+- **인증**: 기존 플랫폼 전용 키(`X-Noedaeri-API-Key`) 또는 관리자 세션. (n8n/내부 워커용은 `POST /api/ai/v1/embeddings`와 `X-Noedaeri-Raya-Key`)
+- **기본 모델**: Google Gemini `models/gemini-embedding-001` (기본 768차원, 최대 3072차원)
+- **특징**: 단일 문자열(`input: "..."`) 및 배치 배열(`input: ["...", "..."]`, 최대 100건) 동시 지원. 뇌대리 호스트의 CPU/GPU 자원을 소모하지 않고 Google AI Studio를 통해 고속 추론.
+
+요청 예시:
+```json
+{
+  "input": "임베딩할 단일 문자열 또는 문자열 배열",
+  "model": "models/gemini-embedding-001",
+  "dimensions": 768
+}
+```
+
+응답 예시 (HTTP 200 OK):
+```json
+{
+  "model": "models/gemini-embedding-001",
+  "dimensions": 768,
+  "data": [
+    {
+      "index": 0,
+      "embedding": [-0.01508, 0.00639, 0.02658, "..."]
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 5,
+    "total_tokens": 5
+  }
+}
+```
 
 ### 플랫폼에서 해야 할 일
 

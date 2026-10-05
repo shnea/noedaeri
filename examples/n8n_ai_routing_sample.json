@@ -330,7 +330,7 @@
     },
     {
       "id": "7a9e3f1c-5d2b-4e8a-91f0-8c2d1b4e6a39",
-      "name": "포트폴리오 검색 임베딩",
+      "name": "Google Gemini 임베딩 (공통)",
       "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
       "typeVersion": 1,
       "position": [
@@ -1134,7 +1134,7 @@
         ]
       ]
     },
-    "포트폴리오 검색 임베딩": {
+    "Google Gemini 임베딩 (공통)": {
       "ai_embedding": [
         [
           {

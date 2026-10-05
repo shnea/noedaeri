@@ -35,12 +35,14 @@ class Settings:
     raya_wait: int = 5
     raya_timeout: int = 90
     raya_memory_reserve: int = 3 * 1024**3
+    gemini_api_key: str = ""
 
     @classmethod
     def from_env(cls):
         settings = cls(
             raya_enabled=os.environ.get("RAYA_ENABLED", "0") == "1",
             raya_key=os.environ.get("NOEDAERI_RAYA_API_KEY", ""),
+            gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),
             raya_model_root=Path(
                 os.environ.get(
                     "RAYA_MODEL_ROOT", str(Path(__file__).resolve().parents[2] / "models/raya")

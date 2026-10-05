@@ -125,7 +125,7 @@ def main():
                         "name": "뇌대리 Mistral",
                     }
                 }
-            elif node["name"] == "포트폴리오 검색 임베딩" and values.get("N8N_GEMINI_CREDENTIAL_ID"):
+            elif node["name"] in {"포트폴리오 검색 임베딩", "Google Gemini 임베딩 (공통)", "Gemini 임베딩"} and values.get("N8N_GEMINI_CREDENTIAL_ID"):
                 node["credentials"] = {
                     "googlePalmApi": {
                         "id": values["N8N_GEMINI_CREDENTIAL_ID"],

@@ -125,8 +125,13 @@ def write_agents(values):
         }
         if path.exists():
             previous = plistlib.loads(path.read_bytes())
-            if previous.get("ProgramArguments") != arguments:
+            prev_args = previous.get("ProgramArguments", [])
+            if len(prev_args) != len(arguments) or [
+                Path(prev_args[0]).resolve(),
+                *prev_args[1:],
+            ] != [Path(arguments[0]).resolve(), *arguments[1:]]:
                 raise RuntimeError("A different installation owns this launch agent")
+            arguments = prev_args
         path.write_bytes(plistlib.dumps(payload))
         path.chmod(0o600)
 
@@ -314,6 +319,8 @@ def serve(component):
             "config/platform.enc.env",
             "--config",
             "config/runtime.enc.env",
+            "--config",
+            "config/ai-providers.enc.env",
         ]
     os.chdir(ROOT)
     os.execvpe(args[0], args, env)
