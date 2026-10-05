@@ -64,3 +64,36 @@ def test_package_preserves_display_aspect_and_cancellation(tmp_path):
     assert (variant["width"], variant["height"]) == (640, 480)
     with pytest.raises(JobCancelled):
         video_package(source, tmp_path / "cancelled", 0, 30, lambda: False, lambda _: None)
+
+
+@pytest.mark.parametrize("probe", ['{"streams":[]}', '{"format":{"duration":"N/A"}}'])
+def test_package_rejects_incomplete_probe(tmp_path, monkeypatch, probe):
+    from noedaeri import media
+
+    monkeypatch.setattr(media, "run_process", lambda *args, **kwargs: probe)
+    with pytest.raises(MediaError, match="unsupported_media"):
+        media.video_package(
+            tmp_path / "input", tmp_path / "out", 0, 30, lambda: True, lambda _: None
+        )
+
+
+def test_package_reserves_before_writing_outputs(tmp_path, monkeypatch):
+    from noedaeri import media
+
+    monkeypatch.setattr(
+        media,
+        "run_process",
+        lambda *args, **kwargs: (
+            '{"format":{"duration":"60"},"streams":[{"width":1280,"height":720}]}'
+        ),
+    )
+
+    def reject(amount):
+        assert amount > 60_000_000
+        assert list((tmp_path / "out").iterdir()) == []
+        raise MediaError("storage_capacity_exceeded")
+
+    with pytest.raises(MediaError, match="storage_capacity_exceeded"):
+        media.video_package(
+            tmp_path / "input", tmp_path / "out", 0, 30, lambda: True, lambda _: None, reject
+        )

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { z } from "zod";
 import { IntegrationGuide } from "./IntegrationGuide";
@@ -48,7 +48,15 @@ function Status({ value }: { value: string }) {
   );
 }
 
-function Details({ job, cancel }: { job: Job; cancel: () => void }) {
+function Details({
+  job,
+  cancel,
+  retry,
+}: {
+  job: Job;
+  cancel: () => void;
+  retry: () => void;
+}) {
   const imagePackage = z
     .object({
       type: z.literal("image_package"),
@@ -63,6 +71,8 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
   const videoPackage = z
     .object({
       type: z.literal("video_package"),
+      duration_seconds: z.number().optional(),
+      total_bytes: z.number().optional(),
       variants: z.array(z.object({ label: z.string(), playlist: z.string() })),
     })
     .safeParse(job.result);
@@ -71,6 +81,8 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
     ? `${job.stage.slice(9)} 영상 변환 중`
     : new Map([
         ["thumbnail", "썸네일 생성 중"],
+        ["probing", "영상 정보 분석 중"],
+        ["reserving", "결과 저장 공간 예약 중"],
         ["image_processing", "이미지 검사·썸네일·미리보기 생성 중"],
         ["packaging", "결과 묶음 생성 중"],
       ]).get(job.stage);
@@ -165,6 +177,18 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
             </button>
           )}
         </div>
+        {Boolean(job.output_reserved) && (
+          <p>
+            결과 공간 예약 {((job.output_reserved ?? 0) / 1048576).toFixed(1)}{" "}
+            MiB
+          </p>
+        )}
+        {["failed", "cancelled"].includes(job.status) && (
+          <button onClick={retry}>입력 다시 올려 재시도</button>
+        )}
+        {job.retry_of && (
+          <p className="muted">이전 작업 {job.retry_of.slice(0, 8)}의 재시도</p>
+        )}
         <p className="mobile-timestamp">
           요청 {date(job.created_at)}
           <br />
@@ -182,6 +206,14 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
                 variants={videoPackage.data.variants}
               />
             )}
+            {videoPackage.success &&
+              videoPackage.data.duration_seconds !== undefined && (
+                <p>
+                  영상 {videoPackage.data.duration_seconds.toFixed(1)}초 · 전체{" "}
+                  {((videoPackage.data.total_bytes ?? 0) / 1048576).toFixed(1)}{" "}
+                  MiB
+                </p>
+              )}
             {imagePackage.success && (
               <>
                 <a
@@ -261,15 +293,21 @@ function NewTask({
   services,
   user,
   done,
+  retryJob,
 }: {
   services: Service[];
   user: User;
   done: () => void;
+  retryJob?: Job | null;
 }) {
-  const [kind, setKind] = useState(services[0]?.kind ?? "");
-  const [title, setTitle] = useState("");
+  const titleInput = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (retryJob) titleInput.current?.focus();
+  }, [retryJob]);
+  const [kind, setKind] = useState(retryJob?.kind ?? services[0]?.kind ?? "");
+  const [title, setTitle] = useState(retryJob?.title ?? "");
   const [file, setFile] = useState<File | null>(null);
-  const [seconds, setSeconds] = useState(0);
+  const [seconds, setSeconds] = useState(retryJob?.options?.seconds ?? 0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [key] = useState(crypto.randomUUID());
@@ -298,6 +336,7 @@ function NewTask({
             kind,
             title,
             idempotency_key: key,
+            retry_of: retryJob?.id ?? null,
             input:
               kind === "image.package"
                 ? {
@@ -343,11 +382,17 @@ function NewTask({
           닫기
         </button>
       </div>
+      {retryJob && (
+        <p>
+          기존 작업을 덮어쓰지 않습니다. 원본을 다시 선택하면 새로운 작업으로
+          실행합니다.
+        </p>
+      )}
       <div className="form-fields">
         <label>
           작업 종류
           <select
-            disabled={submitted}
+            disabled={submitted || Boolean(retryJob)}
             value={kind}
             onChange={(event) => {
               setKind(event.target.value);
@@ -367,6 +412,7 @@ function NewTask({
             disabled={submitted}
             required
             maxLength={120}
+            ref={titleInput}
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="예: 소개 영상 미리보기 생성"
@@ -445,6 +491,7 @@ export default function App() {
   const [filter, setFilter] = useState("all");
   const [serviceFilter, setServiceFilter] = useState("all");
   const [creating, setCreating] = useState(false);
+  const [retryJob, setRetryJob] = useState<Job | null>(null);
   const [error, setError] = useState("");
   const [refreshed, setRefreshed] = useState<string | null>(null);
 
@@ -691,7 +738,13 @@ export default function App() {
                 </p>
               </div>
               {tab === "작업" && (
-                <button className="primary" onClick={() => setCreating(true)}>
+                <button
+                  className="primary"
+                  onClick={() => {
+                    setRetryJob(null);
+                    setCreating(true);
+                  }}
+                >
                   새 작업
                 </button>
               )}
@@ -699,10 +752,13 @@ export default function App() {
             {tab === "연동 지침" && <IntegrationGuide />}
             {creating && tab === "작업" && (
               <NewTask
+                key={retryJob?.id ?? "new"}
+                retryJob={retryJob}
                 services={services}
                 user={user}
                 done={() => {
                   setCreating(false);
+                  setRetryJob(null);
                   void refresh();
                 }}
               />
@@ -831,6 +887,11 @@ export default function App() {
                               <tr className="detail-row">
                                 <td colSpan={6}>
                                   <Details
+                                    retry={() => {
+                                      setRetryJob(job);
+                                      setCreating(true);
+                                      window.scrollTo({ top: 0 });
+                                    }}
                                     job={job}
                                     cancel={() => {
                                       void cancel(job);
@@ -859,7 +920,10 @@ export default function App() {
                     {!jobs.length && (
                       <button
                         className="primary"
-                        onClick={() => setCreating(true)}
+                        onClick={() => {
+                          setRetryJob(null);
+                          setCreating(true);
+                        }}
                       >
                         첫 작업 만들기
                       </button>

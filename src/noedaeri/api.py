@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .auth import COOKIE, Auth, digest
 from .config import Settings
 from .db import Database
+from .execution import execution_lock
 from .queue import Queue
 from .services import SERVICES
 from .storage import Storage
@@ -32,6 +33,7 @@ class NewJob(BaseModel):
     idempotency_key: UUID
     input: dict = Field(default_factory=dict)
     options: dict = Field(default_factory=dict)
+    retry_of: UUID | None = None
 
 
 class Claim(BaseModel):
@@ -60,6 +62,10 @@ class Finish(Lease):
     ) = None
 
 
+class Reservation(Lease):
+    bytes: int = Field(gt=0, le=100_000_000_000)
+
+
 class Approval(BaseModel):
     status: Literal["approved", "rejected", "revoked"]
 
@@ -82,6 +88,9 @@ PUBLIC_JOB_FIELDS = (
     "cleanup_state",
     "result_state",
     "result",
+    "retry_of",
+    "output_reserved",
+    "options",
 )
 
 
@@ -243,11 +252,29 @@ def create_app(settings: Settings | None = None):
                     or existing["options"] != options
                     or existing["input"] != data.input
                     or existing["title"] != data.title
+                    or existing["retry_of"] != data.retry_of
                 ):
                     raise HTTPException(409, "idempotency_conflict")
                 return public_job(existing)
+            if data.retry_of:
+                original = conn.execute(
+                    "SELECT * FROM jobs WHERE id=%s AND owner_id=%s FOR UPDATE",
+                    (data.retry_of, user["id"]),
+                ).fetchone()
+                if not original:
+                    raise HTTPException(404, "job_not_found")
+                if original["status"] not in {"failed", "cancelled"}:
+                    raise HTTPException(409, "retry_not_safe")
+                try:
+                    with execution_lock(storage.root, original["id"]):
+                        pass
+                except BlockingIOError:
+                    raise HTTPException(409, "retry_not_safe") from None
+                if original["kind"] != data.kind:
+                    raise HTTPException(422, "invalid_job_kind")
             reserved = conn.execute(
-                "SELECT COALESCE(sum(CASE WHEN status='uploading' THEN %s ELSE input_bytes END),0) "
+                "SELECT COALESCE(sum(CASE WHEN status='uploading' THEN %s ELSE input_bytes END "
+                "+output_reserved),0) "
                 "AS bytes FROM jobs WHERE cleanup_state<>'done'",
                 (settings.upload_limit,),
             ).fetchone()["bytes"]
@@ -255,7 +282,7 @@ def create_app(settings: Settings | None = None):
                 raise HTTPException(507, "storage_capacity_exceeded")
             job = conn.execute(
                 "INSERT INTO jobs(id, owner_id, idempotency_key, kind, service, title, input, "
-                "options, status) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+                "options, status, retry_of) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
                 (
                     uuid4(),
                     user["id"],
@@ -266,6 +293,7 @@ def create_app(settings: Settings | None = None):
                     Jsonb(data.input),
                     Jsonb(options),
                     "uploading" if service.input_type == "upload" else "queued",
+                    data.retry_of,
                 ),
             ).fetchone()
         return public_job(job)
@@ -421,6 +449,14 @@ def create_app(settings: Settings | None = None):
         if not job:
             raise HTTPException(409, "lease_lost")
         return {"cancel_requested": job["cancel_requested"]}
+
+    @app.post("/internal/jobs/{job_id}/reserve")
+    def reserve_output(request: Request, job_id: UUID, data: Reservation):
+        worker(request)
+        error = storage.reserve(db, job_id, data.token, data.bytes)
+        if error:
+            raise HTTPException(507 if error == "storage_capacity_exceeded" else 409, error)
+        return {"reserved_bytes": data.bytes}
 
     @app.post("/internal/jobs/{job_id}/finish")
     def finish(request: Request, job_id: UUID, data: Finish):

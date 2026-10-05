@@ -22,7 +22,7 @@ class Queue:
             )
             return conn.execute(
                 "UPDATE jobs SET status='running', stage='executing', lease_token=%s, "
-                "worker_id=%s, "
+                "worker_id=%s, execution_guarded=true, "
                 "lease_until=now()+make_interval(secs=>%s), updated_at=now() "
                 "WHERE id=(SELECT id FROM jobs WHERE status='queued' AND kind=ANY(%s) "
                 "ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *",
@@ -61,7 +61,7 @@ class Queue:
                 "finished_at=now(), updated_at=now(), "
                 "expires_at=CASE WHEN %s='succeeded' THEN now()+make_interval(secs=>%s) END, "
                 "result_state=CASE WHEN %s='succeeded' THEN 'available' ELSE 'none' END, "
-                "lease_until=NULL, result=%s WHERE id=%s",
+                "lease_until=NULL, output_reserved=0, result=%s WHERE id=%s",
                 (
                     status,
                     status,

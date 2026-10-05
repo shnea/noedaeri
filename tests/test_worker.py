@@ -109,6 +109,12 @@ def test_worker_process_calls_api_and_finishes(app, kind):
         else:
             result = job["result"]
             assert result["type"] == "video_package"
+            assert result["duration_seconds"] == 7
+            assert result["total_bytes"] == sum(result["file_sizes"].values())
+            assert result["total_bytes"] <= result["estimated_output_bytes"]
+            assert job["output_reserved"] == 0
+            assert result["variants"][0]["video_bitrate"] == 1_200_000
+            assert result["variants"][0]["bytes"] > 0
             assert [item["label"] for item in result["variants"]] == ["480p", "720p"]
             base = f"/api/jobs/{job_id}/files/"
             master = client.get(base + "master.m3u8")

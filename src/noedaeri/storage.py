@@ -4,6 +4,7 @@ from uuid import UUID
 
 from .config import Settings
 from .db import Database
+from .execution import execution_lock
 
 
 class Storage:
@@ -52,7 +53,52 @@ class Storage:
         if folder.exists():
             shutil.rmtree(folder)
 
+    def reserve(self, db, job_id, token, amount):
+        with db.connect() as conn:
+            conn.execute("SELECT pg_advisory_xact_lock(756903)")
+            job = conn.execute(
+                "SELECT * FROM jobs WHERE id=%s AND lease_token=%s AND status='running' "
+                "AND lease_until>now() AND NOT cancel_requested FOR UPDATE",
+                (job_id, token),
+            ).fetchone()
+            if not job:
+                return "lease_lost"
+            used = conn.execute(
+                "SELECT COALESCE(sum(CASE WHEN status='uploading' THEN %s ELSE input_bytes END "
+                "+CASE WHEN id=%s THEN 0 ELSE output_reserved END),0) AS bytes "
+                "FROM jobs WHERE cleanup_state<>'done'",
+                (self.settings.upload_limit, job_id),
+            ).fetchone()["bytes"]
+            others = conn.execute(
+                "SELECT COALESCE(sum(output_reserved),0) AS bytes FROM jobs WHERE id<>%s", (job_id,)
+            ).fetchone()["bytes"]
+            if (
+                not self.available(used + amount)
+                or shutil.disk_usage(self.root).free < self.settings.free_floor + others + amount
+            ):
+                return "storage_capacity_exceeded"
+            conn.execute("UPDATE jobs SET output_reserved=%s WHERE id=%s", (amount, job_id))
+        return None
+
+    def recover(self, db):
+        with db.connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM jobs WHERE status='interrupted' AND execution_guarded"
+            ).fetchall()
+        for row in rows:
+            try:
+                with execution_lock(self.root, row["id"]), db.connect() as conn:
+                    conn.execute(
+                        "UPDATE jobs SET status='failed', finished_at=now(), updated_at=now(), "
+                        "output_reserved=0 WHERE id=%s AND status='interrupted' "
+                        "AND execution_guarded",
+                        (row["id"],),
+                    )
+            except BlockingIOError:
+                continue
+
     def cleanup(self, db: Database):
+        self.recover(db)
         with db.connect() as conn:
             conn.execute(
                 "UPDATE jobs SET status='interrupted', error_code='lease_lost', updated_at=now() "
@@ -72,19 +118,22 @@ class Storage:
             ).fetchall()
             for job in jobs:
                 try:
-                    self.remove("uploads", job["id"])
-                    self.remove("jobs", job["id"])
-                    expired = conn.execute(
-                        "SELECT %s <= now() AS expired", (job["expires_at"],)
-                    ).fetchone()["expired"]
-                    if job["status"] != "succeeded" or expired:
-                        self.remove("results", job["id"])
-                    conn.execute(
-                        "UPDATE jobs SET cleanup_state='done', result_state=CASE "
-                        "WHEN %s THEN 'expired' ELSE result_state END, "
-                        "result=CASE WHEN %s THEN NULL ELSE result END WHERE id=%s",
-                        (bool(expired), bool(expired), job["id"]),
-                    )
+                    with execution_lock(self.root, job["id"]):
+                        self.remove("uploads", job["id"])
+                        self.remove("jobs", job["id"])
+                        expired = conn.execute(
+                            "SELECT %s <= now() AS expired", (job["expires_at"],)
+                        ).fetchone()["expired"]
+                        if job["status"] != "succeeded" or expired:
+                            self.remove("results", job["id"])
+                        conn.execute(
+                            "UPDATE jobs SET cleanup_state='done', result_state=CASE "
+                            "WHEN %s THEN 'expired' ELSE result_state END, "
+                            "result=CASE WHEN %s THEN NULL ELSE result END WHERE id=%s",
+                            (bool(expired), bool(expired), job["id"]),
+                        )
+                except BlockingIOError:
+                    continue
                 except (OSError, ValueError):
                     conn.execute(
                         "UPDATE jobs SET cleanup_state='failed', result_state=CASE "

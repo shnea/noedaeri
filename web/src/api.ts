@@ -8,6 +8,9 @@ export const userSchema = z.object({
 });
 
 export const jobSchema = z.object({
+  retry_of: z.string().nullable().optional(),
+  output_reserved: z.number().optional(),
+  options: z.object({ seconds: z.number().optional() }).optional(),
   id: z.string(),
   title: z.string(),
   kind: z.string(),
@@ -68,7 +71,10 @@ const messages = new Map(
     invalid_job_options: "작업 옵션을 확인해 주세요.",
     invalid_media_or_conversion_failed: "영상을 읽거나 변환하지 못했습니다.",
     processing_timeout: "작업 제한시간을 초과했습니다.",
-    lease_lost: "워커 연결이 끊겼습니다. 실행 상태 확인이 필요합니다.",
+    lease_lost:
+      "실행이 중단되었습니다. 종료 확인 후 실패 상태에서 다시 요청할 수 있습니다.",
+    retry_not_safe:
+      "기존 실행의 종료를 확인하지 못했습니다. 잠시 후 상태를 확인해 주세요.",
     job_not_cancellable: "이미 종료되었거나 취소할 수 없는 작업입니다.",
   }),
 );

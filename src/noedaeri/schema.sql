@@ -33,3 +33,8 @@ CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS workers (
  id uuid PRIMARY KEY, last_seen timestamptz NOT NULL DEFAULT now()
 );
+
+-- Additive, repeatable migration for existing installations.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS output_reserved bigint NOT NULL DEFAULT 0;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS execution_guarded boolean NOT NULL DEFAULT false;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS retry_of uuid REFERENCES jobs(id);

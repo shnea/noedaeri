@@ -7,6 +7,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from .execution import inherited_lock
+
 
 class MediaError(Exception):
     pass
@@ -26,6 +28,7 @@ def run_process(args: list[str], timeout: float, alive: Callable[[], bool], capt
         stderr=subprocess.DEVNULL,
         start_new_session=True,
         env=env,
+        pass_fds=(() if inherited_lock.get() is None else (inherited_lock.get(),)),
     ) as process:
         deadline = time.monotonic() + timeout
         try:
@@ -130,7 +133,7 @@ def thumbnail(source: Path, output: Path, seconds: float, timeout: int, alive: C
         raise MediaError("result_missing")
 
 
-def video_package(source, folder, seconds, timeout, alive, stage):
+def video_package(source, folder, seconds, timeout, alive, stage, reserve=lambda size: None):
     """Produce flat, relative HLS paths suitable for authenticated delivery or export."""
     try:
         folder.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -144,8 +147,7 @@ def video_package(source, folder, seconds, timeout, alive, stage):
             raise MediaError("processing_timeout")
         return budget
 
-    stage("thumbnail")
-    thumbnail(source, folder / "thumbnail.jpg", seconds, remaining(), alive)
+    stage("probing")
     raw = run_process(
         [
             "ffprobe",
@@ -158,7 +160,7 @@ def video_package(source, folder, seconds, timeout, alive, stage):
             "-select_streams",
             "v:0",
             "-show_entries",
-            "stream=width,height,sample_aspect_ratio:stream_side_data=rotation",
+            "stream=width,height,sample_aspect_ratio:stream_side_data=rotation:format=duration",
             "-of",
             "json",
             str(source),
@@ -167,8 +169,17 @@ def video_package(source, folder, seconds, timeout, alive, stage):
         alive,
         capture=True,
     )
-    stream = json.loads(raw)["streams"][0]
-    width, height = int(stream["width"]), int(stream["height"])
+    try:
+        probed = json.loads(raw)
+        duration = float(probed["format"]["duration"])
+        stream = probed["streams"][0]
+        width, height = int(stream["width"]), int(stream["height"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        raise MediaError("unsupported_media") from None
+    if not math.isfinite(duration) or not 0 < duration <= 3600:
+        raise MediaError("unsupported_media")
+    if not (0 < width <= 4096 and 0 < height <= 4096 and width * height <= 8_500_000):
+        raise MediaError("unsupported_media")
     sar = stream.get("sample_aspect_ratio", "1:1")
     if sar not in {"N/A", "0:1"}:
         numerator, denominator = (int(value) for value in sar.split(":"))
@@ -188,7 +199,17 @@ def video_package(source, folder, seconds, timeout, alive, stage):
         width, height = height, width
     short = min(width, height)
     levels = [n for n in (480, 720, 1080) if n <= short] or [short - short % 2]
-    master = ["#EXTM3U", "#EXT-X-VERSION:3"]
+    rates = [1200 if n <= 480 else 2800 if n <= 720 else 5000 for n in levels]
+    # Conservative MPEG-TS overhead plus a second copy in the uncompressed ZIP.
+    estimate = (
+        math.ceil(duration * sum((rate + 128) * 1000 for rate in rates) / 8 * 2 * 1.3)
+        + 4 * 1024 * 1024
+    )
+    stage("reserving")
+    reserve(estimate)
+    stage("thumbnail")
+    thumbnail(source, folder / "thumbnail.jpg", seconds, remaining(), alive)
+    master = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-INDEPENDENT-SEGMENTS"]
     variants = []
     for level in levels:
         if level < 2:
@@ -271,7 +292,17 @@ def video_package(source, folder, seconds, timeout, alive, stage):
         master.extend(
             [f"#EXT-X-STREAM-INF:BANDWIDTH={(bitrate + 128) * 1100},RESOLUTION={w}x{h}", name]
         )
-        variants.append({"label": f"{level}p", "width": w, "height": h, "playlist": name})
+        variants.append(
+            {
+                "label": f"{level}p",
+                "width": w,
+                "height": h,
+                "playlist": name,
+                "video_bitrate": bitrate * 1000,
+                "bandwidth": (bitrate + 128) * 1100,
+                "bytes": sum(p.stat().st_size for p in folder.glob(f"{level}p*")),
+            }
+        )
     (folder / "master.m3u8").write_text("\n".join(master) + "\n")
     stage("packaging")
     import zipfile
@@ -288,6 +319,11 @@ def video_package(source, folder, seconds, timeout, alive, stage):
                     target.write(chunk)
     return {
         "type": "video_package",
+        "duration_seconds": duration,
+        "frame_rate": 30,
+        "estimated_output_bytes": estimate,
+        "total_bytes": sum(p.stat().st_size for p in folder.iterdir() if p.is_file()),
+        "file_sizes": {p.name: p.stat().st_size for p in folder.iterdir() if p.is_file()},
         "master": "master.m3u8",
         "thumbnail": "thumbnail.jpg",
         "download": "video.zip",
