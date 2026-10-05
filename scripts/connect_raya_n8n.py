@@ -86,10 +86,26 @@ def main():
             )
             values["N8N_RAYA_CREDENTIAL_ID"] = credential["id"]
             save_encrypted(config, values)
+        generate_nodes = {
+            "L1 · OpenRouter Free · 호출",
+            "L2 · Groq Free · 호출",
+            "L3 · Gemini Free · 호출",
+            "폴백 · Mistral API · 호출",
+        }
         for node in template["nodes"]:
             if node["name"] == "Raya 난이도 판단":
                 node["parameters"]["url"] = (
                     runtime["PUBLIC_ORIGIN"].rstrip("/") + "/api/ai/v1/raya/route"
+                )
+                node["credentials"] = {
+                    "httpHeaderAuth": {
+                        "id": values["N8N_RAYA_CREDENTIAL_ID"],
+                        "name": "뇌대리 Raya 전용",
+                    }
+                }
+            elif node["name"] in generate_nodes:
+                node["parameters"]["url"] = (
+                    runtime["PUBLIC_ORIGIN"].rstrip("/") + "/api/ai/v1/generate"
                 )
                 node["credentials"] = {
                     "httpHeaderAuth": {
@@ -117,9 +133,7 @@ def main():
             else:
                 nodes.append(node)
         nodes.extend(
-            node
-            for node in remote["nodes"]
-            if node["id"] not in expected_ids | retired_ids
+            node for node in remote["nodes"] if node["id"] not in expected_ids | retired_ids
         )
         retired_names = {node["name"] for node in remote["nodes"] if node["id"] in retired_ids}
         connections = remote["connections"]
@@ -141,6 +155,10 @@ def main():
                 "공급자·순환 후보 준비",
                 "공급자 경로 · 한도 연결 대기",
                 "모델 성능 등급 분기",
+                "L1 · OpenRouter Free · 호출",
+                "L2 · Groq Free · 호출",
+                "L3 · Gemini Free · 호출",
+                "폴백 · Mistral API · 호출",
             }:
                 connections[source] = groups
         fresh = require(client.get("workflows/" + workflow_id))

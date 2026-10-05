@@ -89,7 +89,7 @@ class GenerateInput(BaseModel):
     prompt: str = Field(min_length=1, max_length=200000)
     instruction: str = Field(default="", max_length=40000)
     images: list[str] = Field(default_factory=list, max_length=4)
-    tier: Literal["L1", "L2", "L3"] | None = None
+    tier: Literal["L1", "L2", "L3", "FALLBACK"] | None = None
     cache: bool = Field(default=True, strict=True)
     max_tokens: int | None = Field(default=None, ge=1, le=32768)
     temperature: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)
