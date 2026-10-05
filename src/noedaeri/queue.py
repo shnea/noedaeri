@@ -6,8 +6,9 @@ from .db import Database
 
 
 class Queue:
-    def __init__(self, db: Database, lease_seconds: int, ttl: int):
+    def __init__(self, db: Database, lease_seconds: int, ttl: int, platform_ttl=604800):
         self.db, self.lease_seconds, self.ttl = db, lease_seconds, ttl
+        self.platform_ttl = platform_ttl
 
     def claim(self, worker_id: UUID, kinds: list[str]):
         with self.db.connect() as conn:
@@ -67,7 +68,7 @@ class Queue:
                     status,
                     code,
                     status,
-                    self.ttl,
+                    self.platform_ttl if job["origin"] == "platform" else self.ttl,
                     status,
                     Jsonb(result) if status == "succeeded" else None,
                     job_id,
@@ -79,8 +80,11 @@ class Queue:
         with self.db.connect() as conn:
             return conn.execute(
                 "UPDATE jobs SET cancel_requested=true, updated_at=now(), "
-                "status=CASE WHEN status='queued' THEN 'cancelled' ELSE status END, "
-                "finished_at=CASE WHEN status='queued' THEN now() ELSE finished_at END "
-                "WHERE id=%s AND owner_id=%s AND status IN ('queued','running') RETURNING id",
+                "status=CASE WHEN status IN ('queued','uploading') "
+                "THEN 'cancelled' ELSE status END, "
+                "finished_at=CASE WHEN status IN ('queued','uploading') "
+                "THEN now() ELSE finished_at END "
+                "WHERE id=%s AND owner_id=%s "
+                "AND status IN ('queued','uploading','running') RETURNING id",
                 (job_id, owner_id),
             ).fetchone()

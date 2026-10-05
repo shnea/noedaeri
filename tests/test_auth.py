@@ -57,6 +57,8 @@ def test_oidc_signature_nonce_replay_and_no_implicit_admin(app, monkeypatch, fau
         "noedaeri.auth.httpx.Client",
         lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
     )
+    with app.state.db.connect() as conn:
+        users_before = conn.execute("SELECT count(*) AS n FROM users").fetchone()["n"]
     state = "fixture-state"
     with app.state.db.connect() as conn:
         conn.execute(
@@ -71,7 +73,7 @@ def test_oidc_signature_nonce_replay_and_no_implicit_admin(app, monkeypatch, fau
     if fault:
         assert response.status_code == 400
         with app.state.db.connect() as conn:
-            assert conn.execute("SELECT count(*) AS n FROM users").fetchone()["n"] == 0
+            assert conn.execute("SELECT count(*) AS n FROM users").fetchone()["n"] == users_before
         return
     assert response.status_code == 303
     assert "Secure" in response.headers["set-cookie"]

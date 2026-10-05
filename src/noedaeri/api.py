@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import httpx
 import jwt
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
@@ -21,6 +22,7 @@ from .auth import COOKIE, Auth, digest
 from .config import Settings
 from .db import Database
 from .execution import execution_lock
+from .integration import PLATFORM_OWNER, Webhooks
 from .queue import Queue
 from .services import SERVICES
 from .storage import Storage
@@ -66,6 +68,10 @@ class Reservation(Lease):
     bytes: int = Field(gt=0, le=100_000_000_000)
 
 
+class Receipt(BaseModel):
+    event_id: UUID
+
+
 class Approval(BaseModel):
     status: Literal["approved", "rejected", "revoked"]
 
@@ -91,6 +97,9 @@ PUBLIC_JOB_FIELDS = (
     "retry_of",
     "output_reserved",
     "options",
+    "origin",
+    "terminal_event_id",
+    "received_at",
 )
 
 
@@ -101,12 +110,27 @@ def public_job(job):
 def create_app(settings: Settings | None = None):
     settings = settings or Settings.from_env()
     db, storage = Database(settings.database_url), Storage(settings)
-    queue = Queue(db, settings.lease_seconds, settings.result_ttl)
+    queue = Queue(db, settings.lease_seconds, settings.result_ttl, settings.platform_result_ttl)
     auth = Auth(settings, db)
+    webhooks = Webhooks(db, settings)
+
+    async def deliver():
+        while True:
+            await asyncio.sleep(5)
+            try:
+                await asyncio.to_thread(webhooks.collect)
+                for _ in range(20):
+                    if not await asyncio.to_thread(webhooks.dispatch_one):
+                        break
+            except Exception:
+                import logging
+
+                logging.getLogger("noedaeri").error("webhook_delivery_failed")
 
     async def maintenance():
         while True:
             try:
+                await asyncio.to_thread(webhooks.collect)
                 await asyncio.to_thread(storage.cleanup, db)
             except Exception:
                 # Never emit connection strings, stored payloads or credentials to logs.
@@ -118,11 +142,24 @@ def create_app(settings: Settings | None = None):
     @asynccontextmanager
     async def lifespan(app):
         db.migrate()
+        with db.connect() as conn:
+            conn.execute(
+                "INSERT INTO users(id,issuer,subject,status,role) "
+                "VALUES(%s,'urn:noedaeri:service','platform','approved','user') "
+                "ON CONFLICT(id) DO NOTHING",
+                (PLATFORM_OWNER,),
+            )
         task = asyncio.create_task(maintenance())
+        delivery_task = asyncio.create_task(deliver())
         yield
         task.cancel()
+        delivery_task.cancel()
         try:
             await task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await delivery_task
         except asyncio.CancelledError:
             pass
 
@@ -130,6 +167,38 @@ def create_app(settings: Settings | None = None):
         title="뇌대리 API", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None
     )
     app.state.db, app.state.queue, app.state.storage = db, queue, storage
+    app.state.webhooks = webhooks
+
+    def principal(request):
+        if request.url.path.startswith("/api/v1/"):
+            if not settings.integration_key or not secrets.compare_digest(
+                request.headers.get("X-Noedaeri-API-Key", "").encode(),
+                settings.integration_key.encode(),
+            ):
+                raise HTTPException(401, "platform_key_required")
+            return {"id": PLATFORM_OWNER, "role": "service"}
+        return auth.user(request)
+
+    def present(job):
+        data = public_job(job)
+        with db.connect() as conn:
+            data["delivery"] = conn.execute(
+                "SELECT id,state,attempts,last_http_status,last_attempt_at,next_attempt_at "
+                "FROM deliveries WHERE job_id=%s",
+                (job["id"],),
+            ).fetchone()
+        return data
+
+    def job_owner(request, job_id):
+        user = principal(request)
+        if user["role"] == "admin":
+            with db.connect() as conn:
+                row = conn.execute(
+                    "SELECT owner_id FROM jobs WHERE id=%s AND origin='platform'", (job_id,)
+                ).fetchone()
+            if row:
+                return row["owner_id"]
+        return user["id"]
 
     @app.middleware("http")
     async def security_headers(request, call_next):
@@ -196,9 +265,10 @@ def create_app(settings: Settings | None = None):
         user = auth.user(request, approved=False)
         return {key: user[key] for key in ("id", "role", "status", "csrf")}
 
+    @app.get("/api/v1/services")
     @app.get("/api/services")
     def services(request: Request):
-        auth.user(request)
+        principal(request)
         return [
             {
                 "kind": item.kind,
@@ -210,25 +280,59 @@ def create_app(settings: Settings | None = None):
             for item in SERVICES.values()
         ]
 
+    @app.get("/integrations/SERVICE_INTEGRATION.md")
     @app.get("/api/integrations/guide")
     def integration_guide(request: Request):
-        auth.user(request)
+        if request.url.path.startswith("/api/"):
+            auth.user(request)
         path = Path(__file__).resolve().parents[2] / "docs" / "SERVICE_INTEGRATION.md"
         return FileResponse(path, media_type="text/markdown", filename="SERVICE_INTEGRATION.md")
 
+    @app.get("/integrations/openapi.json")
+    def integration_schema():
+        schema = get_openapi(
+            title="Noedaeri platform integration",
+            version="1.0.0",
+            routes=[
+                route for route in app.routes if getattr(route, "path", "").startswith("/api/v1/")
+            ],
+        )
+        schema.setdefault("components", {})["securitySchemes"] = {
+            "PlatformKey": {"type": "apiKey", "in": "header", "name": "X-Noedaeri-API-Key"}
+        }
+        schema["security"] = [{"PlatformKey": []}]
+        return schema
+
+    @app.get("/api/v1/jobs")
     @app.get("/api/jobs")
     def jobs(request: Request, limit: int = 50):
-        user = auth.user(request)
+        user = principal(request)
         with db.connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM jobs WHERE owner_id=%s ORDER BY created_at DESC LIMIT %s",
-                (user["id"], max(1, min(limit, 100))),
+                "SELECT * FROM jobs WHERE owner_id=%s OR (%s AND origin='platform') "
+                "ORDER BY created_at DESC LIMIT %s",
+                (user["id"], user["role"] == "admin", max(1, min(limit, 100))),
             ).fetchall()
-        return [public_job(row) for row in rows]
+        return [present(row) for row in rows]
 
+    @app.get("/api/v1/jobs/{job_id}")
+    @app.get("/api/jobs/{job_id}")
+    def get_job(request: Request, job_id: UUID):
+        owner = job_owner(request, job_id)
+        with db.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM jobs WHERE id=%s AND owner_id=%s", (job_id, owner)
+            ).fetchone()
+        if not row:
+            raise HTTPException(404, "job_not_found")
+        return present(row)
+
+    @app.post("/api/v1/jobs", status_code=201)
     @app.post("/api/jobs", status_code=201)
     def create_job(request: Request, data: NewJob):
-        user = auth.user(request)
+        user = principal(request)
+        if user["role"] == "service" and not settings.webhook_url:
+            raise HTTPException(503, "platform_delivery_not_configured")
         service = SERVICES.get(data.kind)
         if not service:
             raise HTTPException(422, "unsupported_job_kind")
@@ -282,7 +386,8 @@ def create_app(settings: Settings | None = None):
                 raise HTTPException(507, "storage_capacity_exceeded")
             job = conn.execute(
                 "INSERT INTO jobs(id, owner_id, idempotency_key, kind, service, title, input, "
-                "options, status, retry_of) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
+                "options, status, retry_of, origin) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *",
                 (
                     uuid4(),
                     user["id"],
@@ -294,13 +399,15 @@ def create_app(settings: Settings | None = None):
                     Jsonb(options),
                     "uploading" if service.input_type == "upload" else "queued",
                     data.retry_of,
+                    "platform" if user["role"] == "service" else "web",
                 ),
             ).fetchone()
         return public_job(job)
 
+    @app.put("/api/v1/jobs/{job_id}/input")
     @app.put("/api/jobs/{job_id}/input")
     async def upload(request: Request, job_id: UUID):
-        user = auth.user(request)
+        user = principal(request)
         if request.headers.get("content-type") != "application/octet-stream":
             raise HTTPException(415, "binary_body_required")
         # Stream raw bytes directly into owned storage; no multipart spool outside tmp/.
@@ -346,20 +453,23 @@ def create_app(settings: Settings | None = None):
                 raise
         return {"status": "queued"}
 
+    @app.post("/api/v1/jobs/{job_id}/cancel")
     @app.post("/api/jobs/{job_id}/cancel")
     def cancel(request: Request, job_id: UUID):
-        user = auth.user(request)
-        if not queue.cancel(job_id, user["id"]):
+        owner = job_owner(request, job_id)
+        if not queue.cancel(job_id, owner):
             raise HTTPException(409, "job_not_cancellable")
         return {"status": "cancellation_requested"}
 
+    @app.get("/api/v1/jobs/{job_id}/result")
+    @app.get("/api/v1/jobs/{job_id}/files/{filename}")
     @app.get("/api/jobs/{job_id}/result")
     @app.get("/api/jobs/{job_id}/files/{filename}")
     def result(request: Request, job_id: UUID, filename: str | None = None):
-        user = auth.user(request)
+        owner = job_owner(request, job_id)
         with db.connect() as conn:
             job = conn.execute(
-                "SELECT * FROM jobs WHERE id=%s AND owner_id=%s", (job_id, user["id"])
+                "SELECT * FROM jobs WHERE id=%s AND owner_id=%s", (job_id, owner)
             ).fetchone()
         if not job:
             raise HTTPException(404, "job_not_found")
@@ -403,13 +513,49 @@ def create_app(settings: Settings | None = None):
             path, media_type=service.result_media_type, filename=service.result_filename
         )
 
+    @app.post("/api/v1/jobs/{job_id}/receipt")
+    def receipt(request: Request, job_id: UUID, data: Receipt):
+        user = principal(request)
+        webhooks.collect(job_id)
+        with db.connect() as conn:
+            job = conn.execute(
+                "SELECT * FROM jobs WHERE id=%s AND owner_id=%s FOR UPDATE",
+                (job_id, user["id"]),
+            ).fetchone()
+            if not job:
+                raise HTTPException(404, "job_not_found")
+            if job["status"] != "succeeded" or job["terminal_event_id"] != data.event_id:
+                raise HTTPException(409, "receipt_mismatch")
+            if job["received_at"]:
+                return {"accepted": True, "cleanup": "scheduled"}
+            if job["expires_at"] <= datetime.now(UTC):
+                raise HTTPException(410, "result_unavailable")
+            conn.execute(
+                "UPDATE jobs SET received_at=now(),expires_at=now() WHERE id=%s", (job_id,)
+            )
+            conn.execute("UPDATE deliveries SET state='acknowledged' WHERE job_id=%s", (job_id,))
+        return {"accepted": True, "cleanup": "scheduled"}
+
+    @app.post("/api/admin/jobs/{job_id}/webhook-retry")
+    def retry_webhook(request: Request, job_id: UUID):
+        auth.user(request, admin=True)
+        with db.connect() as conn:
+            row = conn.execute(
+                "UPDATE deliveries SET state='pending',attempts=0,next_attempt_at=now() "
+                "WHERE job_id=%s AND state='failed' RETURNING id",
+                (job_id,),
+            ).fetchone()
+        if not row:
+            raise HTTPException(409, "delivery_not_failed")
+        return {"accepted": True}
+
     @app.get("/api/admin/users")
     def users(request: Request):
         auth.user(request, admin=True)
         with db.connect() as conn:
             return conn.execute(
                 "SELECT id,issuer,subject,status,role,created_at FROM users "
-                "ORDER BY created_at DESC LIMIT 100"
+                "WHERE issuer<>'urn:noedaeri:service' ORDER BY created_at DESC LIMIT 100"
             ).fetchall()
 
     @app.patch("/api/admin/users/{user_id}")
@@ -417,7 +563,8 @@ def create_app(settings: Settings | None = None):
         auth.user(request, admin=True)
         with db.connect() as conn:
             changed = conn.execute(
-                "UPDATE users SET status=%s WHERE id=%s AND role<>'admin' RETURNING id",
+                "UPDATE users SET status=%s WHERE id=%s AND role<>'admin' "
+                "AND issuer<>'urn:noedaeri:service' RETURNING id",
                 (data.status, user_id),
             ).fetchone()
         if not changed:

@@ -827,3 +827,7 @@ main {
     flex-wrap: wrap;
   }
 }
+
+.platform-delivery {
+  margin-top: 24px;
+}

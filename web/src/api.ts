@@ -8,6 +8,17 @@ export const userSchema = z.object({
 });
 
 export const jobSchema = z.object({
+  origin: z.string().optional(),
+  received_at: z.string().nullable().optional(),
+  delivery: z
+    .object({
+      state: z.string(),
+      attempts: z.number(),
+      last_http_status: z.number().nullable(),
+      next_attempt_at: z.string(),
+    })
+    .nullable()
+    .optional(),
   retry_of: z.string().nullable().optional(),
   output_reserved: z.number().optional(),
   options: z.object({ seconds: z.number().optional() }).optional(),
@@ -75,6 +86,8 @@ const messages = new Map(
       "실행이 중단되었습니다. 종료 확인 후 실패 상태에서 다시 요청할 수 있습니다.",
     retry_not_safe:
       "기존 실행의 종료를 확인하지 못했습니다. 잠시 후 상태를 확인해 주세요.",
+    delivery_not_failed:
+      "재전송 가능한 실패 알림이 없습니다. 상태를 새로고침해 주세요.",
     job_not_cancellable: "이미 종료되었거나 취소할 수 없는 작업입니다.",
   }),
 );

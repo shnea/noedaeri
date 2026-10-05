@@ -52,10 +52,12 @@ function Details({
   job,
   cancel,
   retry,
+  redeliver,
 }: {
   job: Job;
   cancel: () => void;
   retry: () => void;
+  redeliver: () => void;
 }) {
   const imagePackage = z
     .object({
@@ -183,17 +185,57 @@ function Details({
             MiB
           </p>
         )}
-        {["failed", "cancelled"].includes(job.status) && (
-          <button onClick={retry}>입력 다시 올려 재시도</button>
+        {job.origin === "platform" && (
+          <section className="platform-delivery" aria-label="플랫폼 전달 상태">
+            <h3>플랫폼 연동</h3>
+            <p>
+              {job.delivery
+                ? ({
+                    pending: "완료 알림 전송 대기",
+                    delivered: "완료 알림 전달됨",
+                    failed: "완료 알림 전송 실패",
+                    acknowledged: "플랫폼 저장 확인됨",
+                  }[job.delivery.state] ?? job.delivery.state)
+                : "작업 종료 후 완료 알림을 보냅니다."}
+            </p>
+            {job.delivery && (
+              <p className="muted">
+                전송 시도 {job.delivery.attempts}회
+                {job.delivery.last_http_status
+                  ? ` · HTTP ${job.delivery.last_http_status}`
+                  : ""}
+              </p>
+            )}
+            {job.delivery?.state === "pending" && (
+              <p className="muted">
+                다음 시도 {date(job.delivery.next_attempt_at)}
+              </p>
+            )}
+            {job.delivery?.state === "failed" && (
+              <button onClick={redeliver}>완료 알림 다시 전송</button>
+            )}
+            {job.status === "succeeded" && (
+              <p>
+                {job.received_at
+                  ? `저장 확인 ${date(job.received_at)} · 결과 정리 대상`
+                  : "결과는 플랫폼 저장 확인 또는 보관 기한까지 유지합니다."}
+              </p>
+            )}
+          </section>
         )}
+        {job.origin !== "platform" &&
+          ["failed", "cancelled"].includes(job.status) && (
+            <button onClick={retry}>입력 다시 올려 재시도</button>
+          )}
         {job.retry_of && (
           <p className="muted">이전 작업 {job.retry_of.slice(0, 8)}의 재시도</p>
         )}
         <p className="mobile-timestamp">
           요청 {date(job.created_at)}
           <br />
-          요청자 {job.owner_id.slice(0, 8)} · 워커{" "}
-          {job.worker_id?.slice(0, 8) ?? "배정 대기"}
+          요청자{" "}
+          {job.origin === "platform" ? "플랫폼" : job.owner_id.slice(0, 8)} ·
+          워커 {job.worker_id?.slice(0, 8) ?? "배정 대기"}
         </p>
       </section>
       <section>
@@ -274,11 +316,16 @@ function Details({
           </>
         ) : (
           <p className="result-placeholder">
-            {job.result_state === "expired" ||
-            job.result_state === "cleanup_failed"
-              ? "보관 기간이 만료되었습니다."
-              : (terminalMessage.get(job.status) ??
-                "작업이 완료되면 결과를 확인할 수 있습니다.")}
+            {job.received_at
+              ? "플랫폼이 결과 저장을 확인했습니다. 뇌대리 결과는 정리 대상입니다."
+              : job.origin === "platform" &&
+                  ["failed", "cancelled"].includes(job.status)
+                ? "결과가 없습니다. 재실행은 플랫폼에서 새 작업으로 요청해 주세요."
+                : job.result_state === "expired" ||
+                    job.result_state === "cleanup_failed"
+                  ? "보관 기간이 만료되었습니다."
+                  : (terminalMessage.get(job.status) ??
+                    "작업이 완료되면 결과를 확인할 수 있습니다.")}
           </p>
         )}
         {job.cleanup_state === "failed" && (
@@ -571,6 +618,24 @@ export default function App() {
         failure instanceof Error
           ? failure.message
           : "취소 요청에 실패했습니다.",
+      );
+    }
+  }
+
+  async function redeliver(job: Job) {
+    if (!user) return;
+
+    try {
+      await request(
+        `/api/admin/jobs/${job.id}/webhook-retry`,
+        mutation(user.csrf),
+      );
+      await refresh();
+    } catch (failure) {
+      setError(
+        failure instanceof Error
+          ? failure.message
+          : "완료 알림 재전송에 실패했습니다.",
       );
     }
   }
@@ -872,9 +937,11 @@ export default function App() {
                                 <Status value={job.status} />
                               </td>
                               <td>
-                                {job.owner_id === user.id
-                                  ? "나"
-                                  : job.owner_id.slice(0, 8)}
+                                {job.origin === "platform"
+                                  ? "플랫폼"
+                                  : job.owner_id === user.id
+                                    ? "나"
+                                    : job.owner_id.slice(0, 8)}
                               </td>
                               <td>
                                 {job.worker_id
@@ -887,6 +954,9 @@ export default function App() {
                               <tr className="detail-row">
                                 <td colSpan={6}>
                                   <Details
+                                    redeliver={() => {
+                                      void redeliver(job);
+                                    }}
                                     retry={() => {
                                       setRetryJob(job);
                                       setCreating(true);

@@ -1,10 +1,12 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 4 · 기준일: 2026-10-05
+문서 버전: 5 · 기준일: 2026-10-05
 
 ## 현재 연결 가능한 범위
 
-**이미지·영상 처리 기능은 구현되어 있지만, 외부 서버용 API 키 인증은 아직 준비 중입니다.** 현재 아래 API는 플랫폼 로그인과 관리자 승인을 받은 웹 사용자 세션으로만 호출할 수 있습니다. NAS·플랫폼·n8n의 무인 호출에 사용자 쿠키를 복사해서 사용하지 마세요.
+**플랫폼 전용 서버 API와 서명 웹훅이 구현되어 있습니다.** 웹 테스트는 기존 `/api/` 세션 인증, 플랫폼은 `/api/v1/` 전용 키 인증을 사용합니다. 운영 전 플랫폼 수신 URL·키 공유 설정과 양쪽 연결 검수가 필요합니다. 사용자 쿠키나 워커 키를 서버 연동에 재사용하지 마세요.
+
+공개 문서: `/integrations/SERVICE_INTEGRATION.md` · 플랫폼 API 명세: `/integrations/openapi.json`. 이 둘은 인증 없이 조회하며 실제 작업·결과는 인증이 필요합니다. 서버 클라이언트와 서명 검증 예제는 [platform_client.py](https://github.com/shnea/noedaeri/blob/main/examples/platform_client.py)를 사용합니다.
 
 이 문서의 경로는 뇌대리 주소 기준 상대 경로입니다. 실제 주소·키·내부 경로는 소스나 문서에 넣지 않고 암호화 설정으로 관리합니다. `WORKER_API_KEY`와 `/internal/` 경로는 뇌대리 실행 워커 전용이며 외부 서비스 연동에 사용하지 않습니다.
 
@@ -13,13 +15,13 @@
 | 이미지 통합 처리 | `image.package` | JPEG 썸네일·WebP 미리보기·ZIP 생성 가능 |
 | 영상 썸네일 | `video.thumbnail` | 웹 요청·결과 다운로드 가능 |
 | 통합 영상 처리 | `video.package` | 썸네일·해상도별 HLS·ZIP 생성 가능 |
-| 외부 서비스 인증·요청 | 미정 | 플랫폼 전용 키 인증 준비 중 |
-| 파일 서비스에 결과 등록 | 미정 | 호출 측 연결 및 등록 계약 준비 중 |
+| 플랫폼 서버 인증·요청 | `/api/v1/` | 전용 키 인증 구현, 수신 주소 설정 후 접수 |
+| 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
 | TTS·임베딩·n8n 워크플로 실행 | 미정 | 미구현 |
 
 ## 플랫폼 기능 대응 현황
 
-플랫폼의 파일 연산 기능을 대응한 뒤 플랫폼 전용 호출을 연결합니다. 예정된 흐름은 작업 접수 → 완료·실패 웹훅 → 플랫폼의 결과 수령·저장 → 저장 확인 후 정리입니다. 플랫폼이 계속 폴링하는 구조로 만들지 않으며, 조회 API는 누락 복구용으로 유지할 예정입니다. 웹훅 인증·재전송·중복 처리는 아직 미구현입니다. 현재 기능 대응표는 [플랫폼 기능 조사 문서](https://github.com/shnea/noedaeri/blob/main/docs/PLATFORM_COMPATIBILITY.md)에 정리했습니다.
+구현된 흐름은 작업 접수 → 완료·실패 웹훅 → 플랫폼의 결과 수령·저장 → 저장 확인 후 정리입니다. 플랫폼은 완료를 기다리며 반복 조회할 필요가 없습니다. 조회 API는 응답 유실·알림 누락 복구용입니다. 웹훅 서명·지속성·제한된 재전송을 제공하고, 수신 측은 이벤트 ID로 중복을 제거해야 합니다. 현재 기능 대응표는 [플랫폼 기능 조사 문서](https://github.com/shnea/noedaeri/blob/main/docs/PLATFORM_COMPATIBILITY.md)에 정리했습니다.
 
 | 영역 | 현재 판단 |
 |---|---|
@@ -27,7 +29,7 @@
 | 영상 썸네일·HLS | 길이·비트레이트·파일 크기 제공, 출력 공간 예약·종료 확인 후 복구 구현 |
 | 화질 단계 | 뇌대리 480p·720p·1080p 유지. 플랫폼에서 수용하도록 변경 예정 |
 | 원본 보기·OG·공유 URL | 플랫폼의 저장·표시 기능으로 유지 |
-| 플랫폼 전용 API | 기능 대응 검수 후 연결 |
+| 플랫폼 전용 API | 뇌대리 구현 완료, 실제 플랫폼 연동 검수는 후속 |
 
 ## 인증과 공통 규칙
 
@@ -63,7 +65,7 @@ const requestKey = crypto.randomUUID();
 | 결과 다운로드 | `GET /api/jobs/{jobId}/result` | 썸네일 JPEG 또는 통합 ZIP |
 | 통합 결과 파일 | `GET /api/jobs/{jobId}/files/{filename}` | 결과에 명시된 HLS·조각·썸네일·ZIP |
 
-현재 개별 작업 조회 API와 목록 페이지네이션은 없습니다. 최근 목록은 최대 100개이므로 외부 서비스의 대량 연동에는 적합하지 않습니다. 외부 호출 API를 추가할 때 별도 계약을 제공합니다.
+개별 작업은 `GET /api/jobs/{jobId}`로 조회할 수 있습니다. 목록은 최근 최대 100개이며 페이지네이션은 없습니다. 플랫폼은 접수 시 job ID와 요청 키를 자체 DB에 저장하고 `/api/v1/jobs/{jobId}`로 누락을 복구합니다.
 
 ```javascript
 const payload = {
@@ -184,7 +186,7 @@ if (job.status === 'uploading') {
 | 동시 실행 | 워커당 한 작업 |
 | 결과 보관 | 웹 테스트 완료 후 24시간, `expires_at` 확인 |
 | 입력·중간 파일 | 종료 후 정리, 실행 중 파일은 정리하지 않음 |
-| 외부 요청 보존 정책 | 미구현. 웹 테스트 정책을 외부 서비스 계약으로 확정하지 않음 |
+| 플랫폼 결과 보존 | 저장 확인까지 유지하되 기본 최대 7일. 아래 플랫폼 계약 참조 |
 | 재시도 | 무조건 재실행하지 않음. `interrupted`는 실행 상태 확인 필요 |
 
 오류는 HTTP 상태와 JSON `detail`을 함께 확인합니다. 입력 구조 검증 실패는 `detail`이 배열일 수 있습니다. 민감한 헤더·쿠키·키를 로그에 남기지 마세요.
@@ -219,3 +221,91 @@ if (job.status === 'uploading') {
 작업 응답의 `output_reserved`는 현재 예약 바이트이며 종료 후 0입니다. 점유 만료 시 `interrupted`로 표시하고, 워커와 자식 프로세스의 파일 잠금 해제를 확인한 뒤 `failed`로 복구합니다. 살아 있는 프로세스를 단순히 연결 끊김만으로 재실행하거나 그 파일을 삭제하지 않습니다. 적용 범위는 현재 동일 호스트의 네이티브 워커이며 NAS·여러 호스트 간 잠금은 미검증입니다. 기존 버전에서 시작한 잠금 미적용 작업은 자동 복구하지 않습니다.
 
 실패·취소 작업은 웹의 **입력 다시 올려 재시도**로 새 작업을 만들 수 있습니다. `POST /api/jobs`에 기존 필드와 `retry_of: "<기존 작업 UUID>"`를 넣고 **새 idempotency_key**를 사용합니다. 해당 새 요청 자체의 통신 재전송에는 같은 키를 유지합니다. 기존 작업은 같은 소유자의 `failed` 또는 `cancelled` 상태여야 하며 종류는 동일해야 합니다. 원본을 다시 업로드하고 제목·옵션은 변경할 수 있습니다. 실행 중·중단 확인 중이면 409 `retry_not_safe`, 다른 소유자의 작업은 404입니다. 기존 작업 이력을 덮어쓰거나 부분 결과부터 이어서 실행하지 않으며 자동 재시도도 하지 않습니다.
+
+
+## 플랫폼 서버 연동 계약 v1
+
+### 환경과 인증
+
+| 뇌대리 설정 | 의미 |
+|---|---|
+| `NOEDAERI_PLATFORM_API_KEY` | 플랫폼 → 뇌대리 요청 전용 키. `X-Noedaeri-API-Key` 헤더로 전달 |
+| `NOEDAERI_PLATFORM_WEBHOOK_URL` | 뇌대리 → 플랫폼 완료 수신 주소. 고정 HTTPS URL, 사용자 정보·쿼리·fragment 금지 |
+| `NOEDAERI_PLATFORM_WEBHOOK_SECRET` | 완료 알림 HMAC-SHA256 공유 비밀. 요청용 키와 분리 |
+| `PLATFORM_RESULT_TTL_SECONDS` | 미확인 결과 최대 보관, 기본 604800초(7일), 설정 범위 1시간~30일 |
+
+실제 값은 SOPS 암호화 env로 관리합니다. `PLATFORM_API_KEY`는 기존 플랫폼을 호출하는 키로 위 전용 키와 다른 값입니다. 키는 브라우저에 넣지 않습니다. 플랫폼 키는 플랫폼 작업에만 접근하고 웹 사용자 작업·관리자 API에는 접근하지 못합니다. 키 변경은 암호화 설정 변경 및 재시작으로 즉시 교체하며 이중 키 유예는 제공하지 않습니다.
+
+요청마다 콜백 URL을 받지 않습니다. 서버 관리자가 설정한 주소만 사용하며 리다이렉트를 따라가지 않고 TLS 인증서를 검증합니다. 내부망에서도 신뢰되는 HTTPS 주소를 사용합니다. 웹훅 주소가 없으면 접수는 503 `platform_delivery_not_configured`로 거절합니다. 키가 없거나 잘못되면 401 `platform_key_required`입니다.
+
+초기화: `.venv/bin/python scripts/configure_platform.py init`은 기존 키를 유지하며 없는 키를 생성합니다. 수신 서버 준비 후 `.venv/bin/python scripts/configure_platform.py webhook`으로 숨김 입력하고 `.venv/bin/python scripts/manage.py restart`로 반영합니다. 키를 플랫폼 서버 비밀 설정에 안전하게 전달해야 하며 채팅·로그·소스에 복사하지 않습니다.
+
+### API와 처리 순서
+
+| 메서드·경로 | 계약 |
+|---|---|
+| `GET /api/v1/services` | 지원 종류·옵션 스키마 |
+| `POST /api/v1/jobs` | 앞의 웹 요청과 같은 JSON. 종류는 image.package / video.thumbnail / video.package. `callback_url` 등 미정 필드는 422 |
+| `PUT /api/v1/jobs/{id}/input` | 원본 바이트. 같은 업로드 한도 적용 |
+| `GET /api/v1/jobs/{id}` | 개별 상태·결과 manifest·`terminal_event_id`·`delivery`·`received_at` |
+| `GET /api/v1/jobs?limit=100` | 최근 플랫폼 작업, 최대 100개. 대량 목록 복구 대신 자체 저장 ID 사용 |
+| `POST /api/v1/jobs/{id}/cancel` | 업로드 대기·큐·실행 취소. 실행 중이면 종료 확인까지 기다림 |
+| `GET /api/v1/jobs/{id}/result` | 단일 JPEG 또는 통합 ZIP |
+| `GET /api/v1/jobs/{id}/files/{name}` | manifest에 기재된 통합 결과 파일, 인증 필요 |
+| `POST /api/v1/jobs/{id}/receipt` | `{ "event_id": "<terminal_event_id>" }`, 저장·등록 완료 확인 |
+
+1. 플랫폼 DB에 원본 file ID·변환 generation·새 요청 UUID를 기록하고 접수합니다. 제목에는 비밀값·내부 경로를 넣지 않습니다.
+2. 응답의 job ID를 저장하고 원본을 업로드합니다. 같은 접수의 재전송은 동일 요청 키·내용을 유지합니다. 업로드 응답이 유실되면 개별 조회로 `uploading`인지 확인한 후 재전송합니다.
+3. 완료 알림은 검증 후 durable inbox에 event ID를 UNIQUE로 저장하고 빠르게 2xx 응답합니다. 실제 다운로드·등록은 별도 작업으로 처리합니다.
+4. 성공이면 결과를 다운로드하고 모든 파생물·재생 목록을 등록합니다. ZIP의 경로를 그대로 신뢰해 풀지 말고 manifest 파일명 허용 목록·경로 탈출·압축 해제 크기를 검사합니다. 결과 묶음에는 원본이 없습니다.
+5. 플랫폼 DB의 현재 generation과 job ID가 일치할 때만 결과를 반영합니다. 이전 작업의 늦은 알림으로 새 결과를 덮어쓰지 않습니다.
+6. 파일 영구 저장과 파생물 등록 트랜잭션이 끝난 뒤 receipt를 보냅니다. 응답 유실 시 같은 receipt를 다시 보내도 됩니다. 성공은 `accepted=true, cleanup=scheduled`이며 실제 파일 삭제 완료를 의미하지 않습니다.
+
+receipt는 즉시 다운로드를 닫고 다음 정리 주기에 결과를 삭제합니다. 동일 확인은 만료 후에도 200, 잘못된 이벤트 ID·실패 작업 확인은 409 `receipt_mismatch`, 확인 전에 자연 만료된 결과는 410입니다. 저장 확인을 보내지 않아도 보관 상한 뒤 만료됩니다. 실패·취소 입력과 중간 파일은 종료 후 정리합니다. 작업 이력과 알림 기록은 파일 정리와 별도로 유지합니다.
+
+### 완료 웹훅
+
+종류는 `job.succeeded`, `job.failed`, `job.cancelled`입니다. 입력 업로드 시간 초과와 중단 후 종료 확인 복구도 실패 알림을 만듭니다. `interrupted`는 종료 미확인이므로 아직 완료 알림을 보내지 않습니다.
+
+```json
+{
+  "version": 1,
+  "event_id": "<고정 이벤트 UUID>",
+  "type": "job.succeeded",
+  "job_id": "<작업 UUID>",
+  "idempotency_key": "<플랫폼 요청 UUID>",
+  "occurred_at": "<작업 종료 ISO-8601>",
+  "job": {
+    "kind": "video.package",
+    "status": "succeeded",
+    "error_code": null,
+    "result": { "type": "video_package", "files": ["<실제 manifest 파일명>"] },
+    "expires_at": "<결과 보관 상한 ISO-8601>"
+  },
+  "job_path": "/api/v1/jobs/<작업 UUID>",
+  "result_path": "/api/v1/jobs/<작업 UUID>/result"
+}
+```
+
+`result`는 위 기능별 전체 manifest입니다. 실패·취소에는 result/result_path가 null입니다. 이벤트 본문은 처음 생성된 값으로 유지되므로 재전송 시 이미 만료됐을 수 있습니다. 최신 상태는 개별 조회로 확인하고 410을 처리합니다.
+
+| 헤더 | 검증 |
+|---|---|
+| `X-Noedaeri-Event-ID` | 본문 event_id와 같아야 함 |
+| `X-Noedaeri-Timestamp` | 전송 시각 Unix 초, 수신 시각과 ±300초 이내 |
+| `X-Noedaeri-Signature` | `sha256=` + HMAC-SHA256(secret, timestamp ASCII + `.` + **원본 요청 body 바이트**)의 소문자 hex |
+
+JSON 재직렬화 후 서명을 계산하지 않습니다. 서명을 constant-time 비교하고 크기 상한 128KiB·버전·종류·UUID를 검증한 뒤 처리합니다. 서버 시계를 동기화합니다. 재전송은 같은 event ID·본문에 새 timestamp·서명을 사용합니다. 서명 검증만으로 중복이 제거되지는 않으므로 플랫폼 inbox UNIQUE 제약이 필수입니다.
+
+전송 시도는 요청별 네트워크 단계 제한 5초, 자동 최대 8회입니다. 실패 후 30·60·120·240·480·960·1920초 간격으로 재시도합니다. 2xx만 성공이며 3xx/4xx/5xx·통신 실패 모두 제한적으로 재시도합니다. 프로세스가 수신 성공 직후 종료되면 같은 알림이 다시 도착할 수 있습니다. 응답 본문은 저장·로그 출력하지 않습니다.
+
+웹 관리자는 플랫폼 작업을 조회·취소하고 전달 상태와 시도 수를 확인할 수 있습니다. 실패한 알림의 **완료 알림 다시 전송**은 같은 이벤트를 다시 예약하며 변환을 재실행하지 않습니다. 관리자 API는 `POST /api/admin/jobs/{id}/webhook-retry`이며 웹 세션·CSRF가 필요합니다. 플랫폼 결과 저장 확인 시 알림 상태는 `acknowledged`로 바뀌고 추가 자동 전송을 중지합니다.
+
+### 플랫폼에서 해야 할 일
+
+- API 키·공유 비밀 주입, HTTPS 수신 URL 제공, inbox 중복 제거와 비동기 결과 수령 구현.
+- 기존 파생물 등록·generation 조건부 반영·HLS 상대 경로 매핑 구현. 480/720/1080, 현재 파일명과 manifest를 수용.
+- 원본 저장·파일 권한·Range·원본 보기·PDF/TXT/Markdown/오디오 원본 뷰어·OG/공유 URL은 플랫폼에서 유지.
+- 실제 모바일 HEIC·회전 영상·무음·긴 영상·큰 파일로 기존 뷰어와 대조하고 기능 플래그로 단계 전환.
+
+현재 뇌대리 측 검수와 실제 플랫폼 연결 성공은 구분합니다. 모의 수신 검사는 플랫폼의 실제 파일 등록·뷰어·도메인 라우팅 검수를 대체하지 않습니다.

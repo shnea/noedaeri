@@ -3,6 +3,7 @@ import secrets
 from pathlib import Path
 from uuid import uuid4
 
+import httpx
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
@@ -26,12 +27,16 @@ def app(tmp_path):
         worker_key=secrets.token_urlsafe(32),
         public_origin="https://testserver",
         storage_root=Path(tmp_path),
+        integration_key=secrets.token_urlsafe(32),
+        webhook_secret=secrets.token_urlsafe(32),
+        webhook_url="https://receiver.example/completion",
         free_floor=0,
         upload_limit=4 * 1024 * 1024,
         storage_limit=20 * 1024 * 1024,
     )
     application = create_app(settings)
     application.state.settings = settings
+    application.state.webhooks.transport = httpx.MockTransport(lambda request: httpx.Response(204))
     with TestClient(application, base_url="https://testserver") as client:
         application.state.client = client
         yield application

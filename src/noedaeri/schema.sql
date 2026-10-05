@@ -38,3 +38,14 @@ CREATE TABLE IF NOT EXISTS workers (
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS output_reserved bigint NOT NULL DEFAULT 0;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS execution_guarded boolean NOT NULL DEFAULT false;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS retry_of uuid REFERENCES jobs(id);
+
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS origin text NOT NULL DEFAULT 'web';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS terminal_event_id uuid NOT NULL DEFAULT gen_random_uuid();
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS received_at timestamptz;
+CREATE TABLE IF NOT EXISTS deliveries (
+ id uuid PRIMARY KEY, job_id uuid NOT NULL UNIQUE REFERENCES jobs(id), body text NOT NULL,
+ state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','delivered','failed','acknowledged')),
+ attempts integer NOT NULL DEFAULT 0, last_http_status integer,
+ last_attempt_at timestamptz, next_attempt_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS deliveries_pending ON deliveries(next_attempt_at) WHERE state='pending';

@@ -16,10 +16,19 @@ from conftest import login
 from test_jobs import new_job
 
 
-@pytest.mark.parametrize("kind", ["video.thumbnail", "video.package", "image.package"])
+@pytest.mark.parametrize("kind", ["video.thumbnail", "video.package", "image.package", "platform"])
 def test_worker_process_calls_api_and_finishes(app, kind):
-    client, _ = login(app)
-    job_id = new_job(client, kind=kind).json()["id"]
+    is_platform = kind == "platform"
+    if is_platform:
+        from test_integration import create, platform
+
+        kind = "video.thumbnail"
+        client = platform(app)
+        job_id = create(client).json()["id"]
+    else:
+        client, _ = login(app)
+        job_id = new_job(client, kind=kind).json()["id"]
+    prefix = "/api/v1" if is_platform else "/api"
     source = app.state.storage.root / "sample.mp4"
     if kind == "image.package":
         from PIL import Image
@@ -44,7 +53,7 @@ def test_worker_process_calls_api_and_finishes(app, kind):
         )
     assert (
         client.put(
-            f"/api/jobs/{job_id}/input",
+            f"{prefix}/jobs/{job_id}/input",
             content=source.read_bytes(),
             headers={"Content-Type": "application/octet-stream"},
         ).status_code
@@ -80,14 +89,23 @@ def test_worker_process_calls_api_and_finishes(app, kind):
     try:
         deadline = time.monotonic() + 40
         while time.monotonic() < deadline:
-            job = client.get("/api/jobs").json()[0]
+            job = client.get(prefix + "/jobs").json()[0]
             if job["status"] in {"succeeded", "failed"}:
                 break
             time.sleep(0.1)
         assert job["status"] == "succeeded"
         if kind == "video.thumbnail":
             assert job["result"]["type"] == "artifact"
-            assert client.get(f"/api/jobs/{job_id}/result").content.startswith(b"\xff\xd8")
+            assert client.get(f"{prefix}/jobs/{job_id}/result").content.startswith(b"\xff\xd8")
+            if is_platform:
+                app.state.webhooks.collect()
+                assert app.state.webhooks.dispatch_one()
+                response = client.post(
+                    f"{prefix}/jobs/{job_id}/receipt", json={"event_id": job["terminal_event_id"]}
+                )
+                assert response.status_code == 200
+                app.state.storage.cleanup(app.state.db)
+                assert client.get(f"{prefix}/jobs/{job_id}/result").status_code == 410
         elif kind == "image.package":
             result = job["result"]
             assert result["type"] == "image_package"

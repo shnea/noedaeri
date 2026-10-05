@@ -61,3 +61,12 @@ ICC 색상 변환 뒤 EXIF·ICC 등 원본 부가정보를 제거한다. 원본�
 참고 구현 계약: [Pillow 이미지 포맷](https://pillow.readthedocs.io/en/stable/handbook/image-file-formats.html), [pillow-heif 플러그인](https://pillow-heif.readthedocs.io/en/stable/pillow-plugin.html). 실제 지원 여부는 설치된 코덱에 대한 프로젝트 테스트 결과를 따른다.
 
 영상 길이·화질별 목표 비트레이트로 ZIP 포함 출력 공간을 예약한다. DB advisory lock으로 예약 경쟁을 직렬화하고 점유 토큰을 검증한다. 실행 중 실제 출력량을 검사하며 예약 초과는 실패 처리한다. 스키마 변경은 시작 시 반복 가능한 ADD COLUMN IF NOT EXISTS로 적용한다.
+
+
+## 플랫폼 연결
+
+`/api/v1/`은 전용 헤더 키로 고정 서비스 주체에 연결하며 웹 사용자 세션과 분리한다. 관리자만 웹에서 플랫폼 작업을 조회·취소하고 알림을 재전송할 수 있다. 서비스 주체는 사용자 승인 목록에서 제외한다. 기존 `PLATFORM_API_KEY`·워커 키와 다른 전용 키와 HMAC 공유 비밀을 암호화 env로 관리한다.
+
+종료 작업을 durable deliveries 테이블에 고정 이벤트 ID·불변 JSON 본문으로 수집한다. 정리 전 수집하며, receipt가 먼저 와도 해당 이벤트를 보존한다. 별도 비동기 루프에서 행 잠금으로 한 전달자를 선택하고 HTTPS 서명 요청을 보낸다. 수신 성공과 로컬 커밋 사이의 장애는 중복 전송을 만들 수 있어 수신 inbox의 event ID UNIQUE 처리가 필수다. 조회·접수는 웹훅 전송을 기다리지 않는다. 실패는 최대 8회 후 중지하며 관리자 수동 재전송은 동일 이벤트다.
+
+플랫폼 결과는 기본 7일 보관 상한 또는 저장 확인까지 유지한다. receipt는 해당 job의 terminal_event_id를 검증하며 다운로드를 즉시 닫고 정리를 예약한다. 파일 정리 실패는 기존 cleanup 상태로 표시한다. 입력·중간 파일은 종료 후 정리하며 원본은 플랫폼이 보관한다. 실제 수신 URL 미설정 시 신규 플랫폼 접수를 거절한다.
