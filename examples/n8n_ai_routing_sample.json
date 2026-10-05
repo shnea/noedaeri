@@ -596,8 +596,8 @@
         -440
       ],
       "parameters": {
-        "content": "## AI 작업 분기 + Raya 난이도 판단\n수동 실행하면 가상 요청 8종과 미등록 요청 1종이 각 분기로 나뉩니다.\n각 **지침 대기** 노드의 `instruction`은 비워 두었습니다. 작업별 지침을 받은 뒤 채웁니다.\n\n### 연결 상태\n실제 Raya CPU 추론 → L1 / L2 / L3 / L4 분기까지 연결했습니다.\nL1 OpenRouter `openrouter/free` → L2 Groq Free → L3 Gemini Free → L4 Copilot Pro `gpt-5.3-codex`.\n선택 단계가 소진되면 한 단계씩 내려가고 L1까지 소진되면 대기합니다. 현재는 후보 준비만 연결했습니다.\n**실제 AI 답변·검색·화면 생성·학습 데이터 수집은 아직 없습니다.**\nRaya는 최대 512토큰만 분석하며 긴 입력은 `routing.input_truncated`로 표시합니다.\n\n### 새 작업 추가\nSwitch에서 `task_type` 규칙 추가 → 지침 노드 복제 → 출력 연결.\n미등록 작업은 마지막 분기로 보내며 Raya를 호출하지 않습니다.\n가져오기 후 Raya HTTP 노드에 서버 주소와 Header Auth Credential을 선택하세요. 키는 노드 본문에 넣지 않습니다.",
-        "height": 460,
+        "content": "## AI 작업 분기 + Raya 난이도 판단\n수동 실행하면 가상 요청 8종과 미등록 요청 1종이 각 분기로 나뉩니다.\n각 **지침 대기** 노드의 `instruction`은 비워 두었습니다. 작업별 지침을 받은 뒤 채웁니다.\n\n### 연결 상태\n실제 Raya CPU 추론 → L1 / L2 / L3 분기까지 연결했습니다.\nL1 OpenRouter `openrouter/free` → L2 Groq Free → L3 Gemini Free.\nL3→L2→L1→Mistral 폴백→L3 순환입니다. L1부터는 L1→폴백→L3→L2입니다. 네 공급자를 한 번씩 확인해 모두 소진이면 토큰이 없다고 안내하고 종료합니다. 현재는 후보 준비만 연결했습니다.\n**실제 AI 답변·검색·화면 생성·학습 데이터 수집은 아직 없습니다.**\nRaya는 최대 512토큰만 분석하며 긴 입력은 `routing.input_truncated`로 표시합니다.\n\n### 새 작업 추가\nSwitch에서 `task_type` 규칙 추가 → 지침 노드 복제 → 출력 연결.\n미등록 작업은 마지막 분기로 보내며 Raya를 호출하지 않습니다.\n가져오기 후 Raya HTTP 노드에 서버 주소와 Header Auth Credential을 선택하세요. 키는 노드 본문에 넣지 않습니다.",
+        "height": 530,
         "width": 680
       }
     },
@@ -657,7 +657,7 @@
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3,
       "position": [
-        1700,
+        1940,
         560
       ],
       "parameters": {
@@ -732,29 +732,6 @@
               },
               "renameOutput": true,
               "outputKey": "L3 · Gemini Free"
-            },
-            {
-              "conditions": {
-                "options": {
-                  "caseSensitive": true,
-                  "leftValue": "",
-                  "typeValidation": "strict"
-                },
-                "conditions": [
-                  {
-                    "id": "6013ec24-362a-5b79-a1fb-7c7865361652",
-                    "leftValue": "={{ $json.routing.model_tier }}",
-                    "rightValue": "L4",
-                    "operator": {
-                      "type": "string",
-                      "operation": "equals"
-                    }
-                  }
-                ],
-                "combinator": "and"
-              },
-              "renameOutput": true,
-              "outputKey": "L4 · Copilot Pro · GPT-5.3-Codex"
             }
           ]
         },
@@ -762,7 +739,7 @@
           "fallbackOutput": "extra"
         }
       },
-      "notes": "실제 Raya가 L1~L4를 직접 판단합니다. 공급자 연결 전의 분기이며 한도 조회·하향 대체·실제 답변은 아직 실행하지 않습니다.",
+      "notes": "실제 Raya가 L1~L3를 직접 판단합니다. 공급자 연결 전의 분기이며 한도 조회·순환 대체·실제 답변은 아직 실행하지 않습니다.",
       "notesInFlow": true
     },
     {
@@ -771,7 +748,7 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        2020,
+        2260,
         240
       ],
       "parameters": {},
@@ -784,7 +761,7 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        2020,
+        2260,
         430
       ],
       "parameters": {},
@@ -797,7 +774,7 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        2020,
+        2260,
         620
       ],
       "parameters": {},
@@ -810,8 +787,8 @@
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        2020,
-        1000
+        2260,
+        810
       ],
       "parameters": {},
       "notes": "알려지지 않은 등급입니다. 실제 AI 호출 없이 연결 상태를 확인합니다.",
@@ -849,7 +826,7 @@
     },
     {
       "id": "00459264-5d77-505d-9a1c-efe0408cf668",
-      "name": "공급자·하향 후보 준비",
+      "name": "공급자·순환 후보 준비",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -857,21 +834,129 @@
         560
       ],
       "parameters": {
-        "jsCode": "// Planning only: quota lookup, capability checks and actual provider calls are not connected.\nconst providers = {\n  L1: { provider: 'openrouter', model: 'openrouter/free', tier: 'free' },\n  L2: { provider: 'groq', model: null, tier: 'free' },\n  L3: { provider: 'gemini', model: null, tier: 'free' },\n  L4: { provider: 'github_copilot', model: 'gpt-5.3-codex', tier: 'pro' },\n};\nconst levels = ['L1','L2','L3','L4'];\nreturn $input.all().map((item, index) => {\n  const requested = item.json.routing.model_tier;\n  const position = levels.indexOf(requested);\n  const candidates = position < 0 ? [] : levels.slice(0, position + 1).reverse();\n  return { json: { ...item.json, provider_plan: {\n    requested_level: requested,\n    candidates: candidates.map(level => ({ level, ...providers[level] })),\n    selected_level: null,\n    quota_status: 'not_connected',\n    capability_status: 'not_connected',\n    exhausted_action: 'wait',\n    status: position < 0 ? 'invalid_level' : 'awaiting_provider_connections',\n  } }, pairedItem: { item: index } };\n});"
+        "jsCode": "// Planning only: quota lookup, capability checks and actual provider calls are not connected.\nconst providers = {\n  L1: { provider: 'openrouter', model: 'openrouter/free', tier: 'free' },\n  L2: { provider: 'groq', model: null, tier: 'free' },\n  L3: { provider: 'gemini', model: null, tier: 'free' },\n  mistral: { provider: 'mistral', model: null, tier: 'free' },\n};\nconst levels = ['L3','L2','L1','mistral'];\nreturn $input.all().map((item, index) => {\n  const requested = item.json.routing.model_tier;\n  const position = levels.indexOf(requested);\n  const candidates = position < 0 ? [] : levels.slice(position).concat(levels.slice(0, position));\n  return { json: { ...item.json, provider_plan: {\n    requested_level: requested,\n    candidates: candidates.map(level => ({ level, ...providers[level] })),\n    route_target: 'primary',\n    selected_level: null,\n    quota_status: 'not_connected',\n    capability_status: 'not_connected',\n    cycle: levels,\n    max_attempts_per_cycle: levels.length,\n    exhausted_action: 'notify_no_tokens',\n    exhausted_message: '현재 사용 가능한 AI 토큰이 없습니다. 한도 갱신 후 다시 시도해 주세요.',\n    status: position < 0 ? 'invalid_level' : 'awaiting_provider_connections',\n  } }, pairedItem: { item: index } };\n});"
       },
-      "notes": "L4→L3→L2→L1, L3→L2→L1처럼 선택 등급 이하만 후보로 준비합니다. 실제 한도 소진 확인 시 한 단계 내려갑니다. 이미지·도구·출력 형식을 지원하지 않으면 해당 후보를 사용할 수 없습니다. L1까지 소진되면 대기합니다. 현재는 연결 계획만 만들며 공급자를 호출하지 않습니다.",
+      "notes": "L3→L2→L1→Mistral 폴백→L3 순환입니다. L1부터는 L1→Mistral→L3→L2입니다. 각 공급자를 한 번씩 확인하고 네 공급자가 모두 소진되면 토큰이 없다고 안내하고 종료합니다. 실제 한도 조회·공급자 호출은 아직 미연결이며 route_target은 primary로 둡니다.",
       "notesInFlow": true
     },
     {
-      "id": "a9cfb818-d1a3-5ca6-b61e-a9e3bd4cb0fc",
-      "name": "L4 · Copilot Pro · GPT-5.3-Codex · 연결 대기",
+      "id": "35d1ad50-89bf-5afe-b10b-688c4898be59",
+      "name": "공급자 경로 · 한도 연결 대기",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1680,
+        560
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "cd3437dd-6b86-56df-9504-31ebc78dab99",
+                    "leftValue": "={{ $json.provider_plan.route_target }}",
+                    "rightValue": "primary",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "기본 3단계"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "107c6474-db3e-5b59-ab49-48f81217e411",
+                    "leftValue": "={{ $json.provider_plan.route_target }}",
+                    "rightValue": "mistral",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Mistral 폴백"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "6519241c-2167-5649-9f1e-6cea9362805f",
+                    "leftValue": "={{ $json.provider_plan.route_target }}",
+                    "rightValue": "no_tokens",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "모두 소진 안내"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "notes": "한도 조회를 연결한 뒤 primary / mistral / no_tokens를 결정합니다. 현재는 primary만 사용합니다. 기능 미지원·인증 실패·조회 오류를 토큰 소진으로 표시하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "ab5b3409-ca94-5133-9efd-6bcf4d264a81",
+      "name": "폴백 · Mistral API · 연결 대기",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
-      "parameters": {},
       "position": [
-        2020,
-        810
-      ]
+        1940,
+        1100
+      ],
+      "parameters": {},
+      "notes": "L1 다음에 Mistral 직접 API를 확인하고 소진됐으면 L3로 순환합니다. 모델 ID·인증·무료 모드 접근·이미지/도구/출력 형식 지원을 연결할 때 확인합니다. 현재 실제 호출은 없습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "f24b1ab2-5873-5bc2-9c86-6341788c4086",
+      "name": "모두 소진 · 토큰 없음 안내",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        1300
+      ],
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => ({json: {...item.json, status: 'no_tokens_available', message: '현재 사용 가능한 AI 토큰이 없습니다. 한도 갱신 후 다시 시도해 주세요.'}, pairedItem: {item: index}}));"
+      },
+      "notes": "네 공급자를 한 번씩 확인해 소진을 확인한 경우에만 연결합니다. 현재 한도 조회가 없어 자동으로 이 분기를 선택하지 않습니다. 실제 서비스 응답 연결은 후속입니다.",
+      "notesInFlow": true
     }
   ],
   "connections": {
@@ -1078,7 +1163,7 @@
       "main": [
         [
           {
-            "node": "공급자·하향 후보 준비",
+            "node": "공급자·순환 후보 준비",
             "type": "main",
             "index": 0
           }
@@ -1110,13 +1195,6 @@
         ],
         [
           {
-            "node": "L4 · Copilot Pro · GPT-5.3-Codex · 연결 대기",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
             "node": "판단 결과 확인 필요",
             "type": "main",
             "index": 0
@@ -1124,11 +1202,43 @@
         ]
       ]
     },
-    "공급자·하향 후보 준비": {
+    "공급자·순환 후보 준비": {
+      "main": [
+        [
+          {
+            "node": "공급자 경로 · 한도 연결 대기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "공급자 경로 · 한도 연결 대기": {
       "main": [
         [
           {
             "node": "모델 성능 등급 분기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "폴백 · Mistral API · 연결 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "모두 소진 · 토큰 없음 안내",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "판단 결과 확인 필요",
             "type": "main",
             "index": 0
           }

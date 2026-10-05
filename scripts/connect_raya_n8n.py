@@ -2,6 +2,7 @@
 
 import json
 import os
+import uuid
 from io import StringIO
 from urllib.parse import urlsplit
 
@@ -98,6 +99,7 @@ def main():
                 }
         # Preserve input samples, task instructions, custom nodes and existing branch rules.
         expected_ids = {node["id"] for node in template["nodes"]}
+        retired_ids = {str(uuid.uuid5(uuid.NAMESPACE_URL, "noedaeri.example/draft/l4-output"))}
         unchanged = {"n8n-nodes-base.manualTrigger", "n8n-nodes-base.set"}
         remote_by_id = {node["id"]: node for node in remote["nodes"]}
         nodes = []
@@ -114,10 +116,19 @@ def main():
                 nodes.append(original)
             else:
                 nodes.append(node)
-        nodes.extend(node for node in remote["nodes"] if node["id"] not in expected_ids)
+        nodes.extend(
+            node
+            for node in remote["nodes"]
+            if node["id"] not in expected_ids | retired_ids
+        )
+        retired_names = {node["name"] for node in remote["nodes"] if node["id"] in retired_ids}
         connections = remote["connections"]
+        connections.pop("공급자·하향 후보 준비", None)
+        for name in retired_names:
+            connections.pop(name, None)
         for groups in connections.values():
             for output in groups.get("main", []):
+                output[:] = [edge for edge in output if edge["node"] not in retired_names]
                 for edge in output:
                     if edge["node"] == "Raya·AI 연결 예정":
                         edge["node"] = "Raya 요청 준비"
@@ -127,7 +138,8 @@ def main():
                 "Raya 요청 준비",
                 "Raya 난이도 판단",
                 "요청·판단 합치기",
-                "공급자·하향 후보 준비",
+                "공급자·순환 후보 준비",
+                "공급자 경로 · 한도 연결 대기",
                 "모델 성능 등급 분기",
             }:
                 connections[source] = groups
@@ -145,8 +157,13 @@ def main():
         if saved["active"] or saved["connections"] != connections:
             raise RuntimeError("Workflow verification failed")
         actual = {node["id"]: node for node in saved["nodes"]}
+        if set(actual) != {node["id"] for node in nodes}:
+            raise RuntimeError("Saved node set did not match")
         for node in nodes:
-            if actual[node["id"]]["parameters"] != node["parameters"]:
+            if (
+                actual[node["id"]]["parameters"] != node["parameters"]
+                or actual[node["id"]]["name"] != node["name"]
+            ):
                 raise RuntimeError("Saved node parameters did not match")
     print("Inactive n8n draft updated and verified; original instructions preserved.")
 

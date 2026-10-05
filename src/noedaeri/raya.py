@@ -17,7 +17,7 @@ from typing import Literal
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-TIERS = ("L1", "L2", "L3", "L4")
+TIERS = ("L1", "L2", "L3")
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -32,7 +32,7 @@ class RouteInput(BaseModel):
 class RouteResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     task_type: str
-    model_tier: Literal["L1", "L2", "L3", "L4"]
+    model_tier: Literal["L1", "L2", "L3"]
     probabilities: dict[str, float]
     confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
     input_tokens: int = Field(ge=1, le=512)

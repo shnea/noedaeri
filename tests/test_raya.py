@@ -14,7 +14,7 @@ from noedaeri.raya import Raya, RayaError
 RESULT = {
     "task_type": "chat.general",
     "model_tier": "L1",
-    "probabilities": {"L1": 0.8, "L2": 0.1, "L3": 0.07, "L4": 0.03},
+    "probabilities": {"L1": 0.8, "L2": 0.15, "L3": 0.05},
     "confidence": 0.7,
     "input_tokens": 40,
     "input_truncated": False,
@@ -53,6 +53,7 @@ def fake_runtime(tmp_path, monkeypatch):
         "    result['task_type']=payload['task_type']\n"
         "    if payload['prompt']=='bad_probs': result['probabilities']['L1']=1.9\n"
         "    if payload['prompt']=='old_tier': result['model_tier']='small_model'\n"
+        "    if payload['prompt']=='removed_tier': result['model_tier']='L4'\n"
         "    print(json.dumps(result),flush=True)\n"
     )
     return tmp_path
@@ -117,6 +118,7 @@ def test_busy_is_bounded_and_does_not_stop_active_request(router):
         ("crash", "raya_process_failed"),
         ("bad_probs", "raya_process_failed"),
         ("old_tier", "raya_process_failed"),
+        ("removed_tier", "raya_process_failed"),
     ],
 )
 def test_failure_reaps_child_before_retry(router, prompt, error):

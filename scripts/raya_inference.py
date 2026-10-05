@@ -11,8 +11,7 @@ ROUTE = {
     "criteria": {
         "L1": "simple requests",
         "L2": "moderately complex requests",
-        "L3": "complex requests requiring multi-step reasoning",
-        "L4": "very hard requests requiring advanced reasoning",
+        "L3": "very hard requests requiring advanced reasoning",
     },
 }
 

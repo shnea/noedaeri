@@ -14,13 +14,12 @@ const statusSchema = z.object({
   memory_reserve_bytes: z.number(),
 });
 
-const tiers = ["L1", "L2", "L3", "L4"] as const;
+const tiers = ["L1", "L2", "L3"] as const;
 
 const labels = new Map<string, string>([
   ["L1", "L1 · OpenRouter Free"],
   ["L2", "L2 · Groq Free"],
   ["L3", "L3 · Gemini Free"],
-  ["L4", "L4 · Copilot Pro"],
 ]);
 
 const resultSchema = z.object({

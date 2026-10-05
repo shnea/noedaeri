@@ -57,7 +57,7 @@ API는 빌드된 `web/dist`를 함께 제공한다. 초기 관리자 설정이 �
 
 ## n8n 분기 초안
 
-n8n의 AI 작업 분기는 [워크플로 JSON](examples/n8n_ai_routing_sample.json)을 가져와 확인할 수 있다. 수동 실행으로 8개 작업과 미등록 작업을 분기하며, 각 작업의 `instruction`은 추후 지침을 입력하도록 비워 두었다. Raya CPU 추론 뒤 L1·L2·L3·L4로 분기한다. 실제 AI 공급자 호출·학습 데이터 수집·파인튜닝은 후속 범위다. 가져오기용 JSON에는 예시 주소만 있으므로 서버 주소와 전용 Header Auth Credential을 선택한다. [연동 계약](docs/SERVICE_INTEGRATION.md#raya-난이도-판단-api)을 참고한다.
+n8n의 AI 작업 분기는 [워크플로 JSON](examples/n8n_ai_routing_sample.json)을 가져와 확인할 수 있다. 수동 실행으로 8개 작업과 미등록 작업을 분기하며, 각 작업의 `instruction`은 추후 지침을 입력하도록 비워 두었다. Raya CPU 추론 뒤 L1·L2·L3로 분기한다. L3→L2→L1→Mistral 폴백→L3 순환과 모두 소진 시 토큰 없음 안내로 연결할 틀을 제공한다. 실제 한도 조회·AI 공급자 호출·학습 데이터 수집·파인튜닝은 후속 범위다. 가져오기용 JSON에는 예시 주소만 있으므로 서버 주소와 전용 Header Auth Credential을 선택한다. [연동 계약](docs/SERVICE_INTEGRATION.md#raya-난이도-판단-api)을 참고한다.
 
 ### Raya 설치와 실행
 
