@@ -1,0 +1,55 @@
+# 뇌대리
+
+네이티브 PC에서 연산 작업을 실행하고 웹에서 큐·작업·워커·접근 승인을 관리하는 초기 구현이다. Docker를 사용하지 않는다.
+
+현재 실제 실행 서비스는 FFmpeg 영상 썸네일이다. 공통 작업은 파일을 전제로 하지 않으며, 서비스별 입력·옵션·결과를 분리한다. [구조와 구현 범위](docs/architecture.md)를 참고한다.
+
+## 개발 환경
+
+Python 3.12 이상, uv, Node.js, PostgreSQL 17, FFmpeg/ffprobe, nginx, SOPS와 age가 필요하다.
+
+```sh
+uv sync --locked
+npm ci --prefix web
+npm run build --prefix web
+```
+
+개인키는 저장소 밖 기본 SOPS 위치에서 읽는다. `config/platform.enc.env`는 플랫폼 설정, `config/n8n.enc.env`는 별도 연동 키다. 실제 값을 문서·예제·소스에 붙여 넣지 않는다.
+
+## 네이티브 운영
+
+운영 DB와 암호화된 `config/runtime.enc.env`를 초기화하고 macOS launchd에 DB·API·워커·nginx를 등록했다. 실제 경로·연결 정보는 암호화 설정에서 읽는다. DB는 소유자 전용 디렉터리의 Unix 소켓만 사용하며 API는 loopback, 외부 진입은 nginx가 담당한다.
+
+```sh
+.venv/bin/python scripts/manage.py status
+.venv/bin/python scripts/manage.py start
+.venv/bin/python scripts/manage.py stop
+.venv/bin/python scripts/manage.py restart
+```
+
+macOS 사용자 로그인 시 자동 시작하며 프로세스 종료 시 다시 기동한다. 로그인 전 부팅 단계의 서비스는 아니다. `stop`은 현재 실행을 중지하고 DB와 설정을 보존한다. 다음 로그인에는 다시 시작한다. 코드 변경 후 웹을 빌드하고 `restart`한다.
+
+새 환경에서만 `scripts/manage.py init --state-dir <영속_경로> --port <진입_포트>`로 초기화한다. 기존 설정이나 비어 있지 않은 디렉터리는 덮어쓰지 않는다. PostgreSQL 17과 nginx가 설치되어 있어야 한다. 생성한 운영 설정은 해당 PC 전용이므로 다른 PC에서 그대로 시작하지 않는다.
+
+실행기는 메모리에서 복호화하여 프로세스에 전달한다. 평문 env는 만들지 않는다. nginx 설정과 launchd 등록 파일은 Git 밖에서 소유자 전용 권한으로 관리한다. 현재 stdout·stderr 및 nginx 접근 로그는 저장하지 않는다. 상세 운영 로그와 회전 정책은 후속 범위다.
+
+API는 빌드된 `web/dist`를 함께 제공한다. 초기 관리자 설정이 비어 있으면 로그인 후 승인 대기만 허용한다. 실제 사용자 로그인과 관리자 연결은 아직 검증하지 않았다.
+
+키 숨김 입력창을 다시 열려면:
+
+```sh
+.venv/bin/python scripts/configure_secret.py --config config/n8n.enc.env --key NOEDAERI_API_KEY
+```
+
+## 검사
+
+```sh
+.venv/bin/ruff check src tests scripts/run.py scripts/check.py scripts/configure_secret.py scripts/manage.py
+.venv/bin/python scripts/check.py
+npm run lint --prefix web
+npm run build --prefix web
+```
+
+DB 검사는 로컬 소켓만 사용하는 일회성 PostgreSQL을 띄운 뒤 삭제한다. 실제 FFmpeg 영상 생성·썸네일 출력, 워커 HTTP 실행, 멱등성·권한·점유·취소·만료 처리를 검사한다. UI 검사는 Playwright 설치 환경에서 `node scripts/ui-check.cjs`로 실행하며 개발 서버가 필요하다. UI 검사의 여러 서비스는 명시된 가상 데이터이며 실제 구현 서비스 목록이 아니다.
+
+`web/tools/oxlint/anti-slop`은 프로젝트에 보관한 원본 플러그인이다. 원본 출처와 의도적인 변경 사항은 해당 디렉터리의 UPSTREAM.md에 기록한다.

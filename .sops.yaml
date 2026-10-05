@@ -1,0 +1,4 @@
+creation_rules:
+  - path_regex: '^config/[^/]+\.enc\.env$'
+    encrypted_regex: '.*'
+    age: age10a6nnpwlzelh9c4zarc7hfs2utl6y2jrj8nfxqey7umhrhnqe5tsmwl9km

@@ -1,0 +1,32 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+/tmp/
+/.venv/
+/.pytest_cache/
+/.ruff_cache/
+/**/node_modules/
+/web/dist/
+/.impeccable/review/
+/.impeccable/mocks/
+/.impeccable/build/
+/.impeccable/config.local.json
+*.egg-info/
+
+# Plaintext environment files are local only.
+.env
+.env.*
+*.env
+!.env.example
+!config/*.enc.env
+
+# Private keys and temporary decrypted material.
+.secrets/
+*.key
+*.pem
+*.agekey
+keys.txt
+*.decrypted
+*.decrypted.*
+*.bak
+/web/tsconfig.tsbuildinfo
