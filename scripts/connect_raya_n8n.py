@@ -125,6 +125,20 @@ def main():
                         "name": "뇌대리 Mistral",
                     }
                 }
+            elif node["name"] == "포트폴리오 검색 임베딩" and values.get("N8N_GEMINI_CREDENTIAL_ID"):
+                node["credentials"] = {
+                    "googlePalmApi": {
+                        "id": values["N8N_GEMINI_CREDENTIAL_ID"],
+                        "name": "뇌대리 Google AI Studio",
+                    }
+                }
+            elif node["name"] == "포트폴리오 벡터 검색" and values.get("N8N_QDRANT_CREDENTIAL_ID"):
+                node["credentials"] = {
+                    "qdrantApi": {
+                        "id": values["N8N_QDRANT_CREDENTIAL_ID"],
+                        "name": "뇌대리 Qdrant",
+                    }
+                }
         # Preserve input samples, task instructions, custom nodes and existing branch rules.
         expected_ids = {node["id"] for node in template["nodes"]}
         retired_ids = {str(uuid.uuid5(uuid.NAMESPACE_URL, "noedaeri.example/draft/l4-output"))}
@@ -153,6 +167,7 @@ def main():
         connections = remote["connections"]
         connections.pop("공급자·하향 후보 준비", None)
         connections.pop("Raya·AI 연결 예정", None)
+        connections.pop("포트폴리오 검색 · 지침 대기", None)
         for name in retired_names:
             connections.pop(name, None)
         for source, groups in template["connections"].items():

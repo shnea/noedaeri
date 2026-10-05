@@ -307,40 +307,59 @@
     },
     {
       "id": "c474da10-5623-572e-ba32-373b5d36b71c",
-      "name": "포트폴리오 검색 · 지침 대기",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "name": "포트폴리오 벡터 검색",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "typeVersion": 1.1,
       "position": [
         160,
         320
       ],
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
-              "name": "task_name",
-              "value": "포트폴리오 검색",
-              "type": "string"
-            },
-            {
-              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
-              "name": "instruction",
-              "value": "",
-              "type": "string"
-            },
-            {
-              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
-              "name": "status",
-              "value": "awaiting_instructions",
-              "type": "string"
-            }
-          ]
-        },
-        "includeOtherFields": true,
+        "mode": "retrieve",
+        "qdrantCollection": "portfolio",
         "options": {}
       },
-      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "credentials": {
+        "qdrantApi": {
+          "id": "",
+          "name": "뇌대리 Qdrant"
+        }
+      },
+      "notes": "질의와 관련된 포트폴리오 문맥을 벡터 검색합니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "7a9e3f1c-5d2b-4e8a-91f0-8c2d1b4e6a39",
+      "name": "포트폴리오 검색 임베딩",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        160,
+        440
+      ],
+      "parameters": {
+        "modelName": "models/text-embedding-004"
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "",
+          "name": "뇌대리 Google AI Studio"
+        }
+      }
+    },
+    {
+      "id": "5e1b2c3d-4f5a-6b7c-8d9e-0f1a2b3c4d5e",
+      "name": "포트폴리오 컨텍스트 합성",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        320
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst originalPrompt = $('작업 종류 분기').first().json.prompt || $json.prompt || '';\nconst contexts = items.map((item, idx) => {\n  const text = item.json.document?.pageContent || item.json.pageContent || item.json.text || (typeof item.json === 'string' ? item.json : JSON.stringify(item.json));\n  const metadata = item.json.document?.metadata || item.json.metadata || {};\n  const title = metadata.title ? `[${metadata.title}] ` : '';\n  return `${idx + 1}. ${title}${text}`;\n}).filter(Boolean);\n\nconst contextText = contexts.length > 0 \n  ? contexts.join('\\n\\n')\n  : '검색된 포트폴리오 정보가 없습니다.';\n\nconst instruction = [\n  '당신은 포트폴리오 안내 AI 어시스턴트입니다.',\n  '아래 [검색된 포트폴리오 정보]를 바탕으로 사용자의 질문에 친절하고 정확하게 답변하세요.',\n  '포트폴리오 정보에 없는 내용은 추측하지 말고, 명시된 사실만 근거로 답변하세요.',\n  '',\n  '[검색된 포트폴리오 정보]',\n  contextText\n].join('\\n');\n\nreturn [{\n  json: {\n    task_type: 'portfolio.search',\n    prompt: originalPrompt,\n    task_name: '포트폴리오 검색',\n    instruction: instruction,\n    retrieved_context: contextText,\n    retrieved_count: contexts.length,\n    status: 'ready'\n  }\n}];"
+      },
+      "notes": "검색된 문맥을 바탕으로 지침(instruction)과 context를 조립합니다.",
       "notesInFlow": true
     },
     {
@@ -1115,7 +1134,29 @@
         ]
       ]
     },
-    "포트폴리오 검색 · 지침 대기": {
+    "포트폴리오 검색 임베딩": {
+      "ai_embedding": [
+        [
+          {
+            "node": "포트폴리오 벡터 검색",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "포트폴리오 벡터 검색": {
+      "main": [
+        [
+          {
+            "node": "포트폴리오 컨텍스트 합성",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "포트폴리오 컨텍스트 합성": {
       "main": [
         [
           {
@@ -1199,7 +1240,7 @@
         ],
         [
           {
-            "node": "포트폴리오 검색 · 지침 대기",
+            "node": "포트폴리오 벡터 검색",
             "type": "main",
             "index": 0
           }
