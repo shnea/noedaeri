@@ -116,13 +116,13 @@ Raya에는 현재 사용자 요청과 필요한 텍스트 문맥을 전달하고
    - 모델: Google Gemini `models/gemini-embedding-001` (기본 768차원, 최대 3072차원). 단일 및 배치(최대 100건) 고속 동기 생성 지원.
    - n8n 워크플로 내부에서도 동일한 `models/gemini-embedding-001` 및 `뇌대리 Google AI Studio` 자격증명(`googlePalmApi`)을 사용하여 임베딩 일관성을 보장한다.
 2. **공통 벡터 저장소 (Vector Store)**:
-   - 대상: Qdrant 벡터 데이터베이스 (코사인 유사도).
-   - n8n 네이티브 노드 `@n8n/n8n-nodes-langchain.vectorStoreQdrant`와 `뇌대리 Qdrant`(`qdrantApi`) 자격증명을 연결한다.
-   - 컬렉션 지정: `qdrantCollection: "={{ $json.collection || $json.task_type.split('.')[0] }}"` 수식을 통해 `portfolio.search`는 `portfolio` 컬렉션, `document.analyze`는 `document` 컬렉션, `blog.summary`는 `blog` 컬렉션 등 요청에 따라 동적으로 해당 컬렉션을 자동 조회한다.
+   - 대상: 뇌대리 공통 문서 색인 및 PostgreSQL 벡터 데이터베이스 (코사인 유사도).
+   - n8n `공통 벡터 검색` 노드는 뇌대리 전용 벡터 검색 API(`POST /api/ai/v1/indexing/search`)를 호출하는 HTTP Request 노드로 동작하며, `뇌대리 Raya 전용` Header Auth(`X-Noedaeri-Raya-Key`)로 인증한다.
+   - 컬렉션 지정: 요청의 `collection` 파라미터 또는 작업 종류(`task_type`)에 맞춰 동적으로 뇌대리 색인 컬렉션을 자동 조회한다.
 3. **단일 공통 RAG 검색 워크플로**:
    - `작업 종류 분기`에서 RAG가 필요한 모든 작업(`portfolio.search`, `document.analyze` 등)이 단일 `공통 벡터 검색` 노드로 라우팅된다.
-   - `공통 벡터 검색` 노드가 질의(`$json.prompt`)를 임베딩하여 대상 Qdrant 컬렉션에서 상위 관련 문맥을 검색한다.
-   - `공통 컨텍스트 및 지침 합성` 노드가 작업 종류(`task_type`)에 맞는 템플릿(포트폴리오 안내, 문서 분석, 블로그 요약, 코드 리뷰 등)을 적용하여 신뢰할 수 있는 `instruction`과 `retrieved_context`를 조립한다.
+   - `공통 벡터 검색` 노드가 뇌대리 공통 벡터 검색 API를 호출하여, 뇌대리 DB에 색인된 문서 중 코사인 유사도가 높은 상위 관련 문맥(`results`)을 검색한다. (서버 내부에서 Google Gemini `models/gemini-embedding-001` 임베딩 생성 및 PostgreSQL 코사인 유사도 검색을 원스톱 수행)
+   - `공통 컨텍스트 및 지침 합성` 노드가 검색 결과(`results`)와 작업 종류(`task_type`)에 맞는 템플릿(포트폴리오 안내, 문서 분석, 블로그 요약, 코드 리뷰 등)을 적용하여 신뢰할 수 있는 `instruction`과 `retrieved_context`를 조립한다.
    - 합성된 문맥과 요청이 `Raya 요청 준비` → `Raya 난이도 판단` (L1/L2/L3) → 최적의 LangChain Agent로 전달되어 정확하고 접지(Grounding)된 답변을 생성한다.
 4. **공통 벡터 데이터 인덱싱 파이프라인**:
    - 범용 인덱싱 워크플로 [n8n_vector_indexing_sample.json](https://github.com/shnea/noedaeri/blob/main/examples/n8n_vector_indexing_sample.json) 제공. (포트폴리오 전용 샘플 [n8n_portfolio_indexing_sample.json](https://github.com/shnea/noedaeri/blob/main/examples/n8n_portfolio_indexing_sample.json) 호환)

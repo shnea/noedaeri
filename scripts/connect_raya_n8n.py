@@ -126,6 +126,16 @@ def main():
                         "name": "뇌대리 Mistral",
                     }
                 }
+            elif node["name"] == "공통 벡터 검색":
+                node["parameters"]["url"] = (
+                    runtime["PUBLIC_ORIGIN"].rstrip("/") + "/api/ai/v1/indexing/search"
+                )
+                node["credentials"] = {
+                    "httpHeaderAuth": {
+                        "id": values["N8N_RAYA_CREDENTIAL_ID"],
+                        "name": "뇌대리 Raya 전용",
+                    }
+                }
             elif node["name"] in {"포트폴리오 검색 임베딩", "Google Gemini 임베딩 (공통)", "Gemini 임베딩"} and values.get("N8N_GEMINI_CREDENTIAL_ID"):
                 node["credentials"] = {
                     "googlePalmApi": {
@@ -133,7 +143,7 @@ def main():
                         "name": "뇌대리 Google AI Studio",
                     }
                 }
-            elif node["name"] in {"포트폴리오 벡터 검색", "공통 벡터 검색"} and values.get("N8N_QDRANT_CREDENTIAL_ID"):
+            elif node["name"] == "포트폴리오 벡터 검색" and values.get("N8N_QDRANT_CREDENTIAL_ID"):
                 node["credentials"] = {
                     "qdrantApi": {
                         "id": values["N8N_QDRANT_CREDENTIAL_ID"],
@@ -142,7 +152,10 @@ def main():
                 }
         # Preserve input samples, task instructions, custom nodes and existing branch rules.
         expected_ids = {node["id"] for node in template["nodes"]}
-        retired_ids = {str(uuid.uuid5(uuid.NAMESPACE_URL, "noedaeri.example/draft/l4-output"))}
+        retired_ids = {
+            str(uuid.uuid5(uuid.NAMESPACE_URL, "noedaeri.example/draft/l4-output")),
+            "7a9e3f1c-5d2b-4e8a-91f0-8c2d1b4e6a39",
+        }
         unchanged = {"n8n-nodes-base.manualTrigger", "n8n-nodes-base.set"}
         remote_by_id = {node["id"]: node for node in remote["nodes"]}
         nodes = []
@@ -152,7 +165,6 @@ def main():
                 node["type"] in unchanged
                 or node["name"]
                 in {
-                    "샘플 요청 8종 + 미등록",
                     "작업 종류 분기",
                 }
             ):
@@ -166,6 +178,7 @@ def main():
         )
         retired_names = {node["name"] for node in remote["nodes"] if node["id"] in retired_ids}
         connections = remote["connections"]
+        connections.pop("Google Gemini 임베딩 (공통)", None)
         connections.pop("공급자·하향 후보 준비", None)
         connections.pop("Raya·AI 연결 예정", None)
         connections.pop("포트폴리오 검색 · 지침 대기", None)
