@@ -19,7 +19,6 @@ from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .ai_gateway import Gateway, install_ai_routes
 from .auth import COOKIE, Auth, digest
 from .config import Settings
 from .db import Database
@@ -117,7 +116,6 @@ def create_app(settings: Settings | None = None):
     auth = Auth(settings, db)
     webhooks = Webhooks(db, settings)
     raya = Raya(settings)
-    gateway = Gateway(settings, db, raya)
 
     async def release_raya():
         while True:
@@ -142,7 +140,6 @@ def create_app(settings: Settings | None = None):
             try:
                 await asyncio.to_thread(webhooks.collect)
                 await asyncio.to_thread(storage.cleanup, db)
-                await asyncio.to_thread(gateway.cleanup)
             except Exception:
                 # Never emit connection strings, stored payloads or credentials to logs.
                 import logging
@@ -207,8 +204,6 @@ def create_app(settings: Settings | None = None):
         return auth.user(request)
 
     install_raya_routes(app, settings, auth, raya, db, principal)
-    app.state.gateway = gateway
-    install_ai_routes(app, settings, auth, gateway, principal)
 
     def present(job):
         data = public_job(job)

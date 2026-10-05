@@ -17,11 +17,10 @@
 | 통합 영상 처리 | `video.package` | 썸네일·해상도별 HLS·ZIP 생성 가능 |
 | 플랫폼 서버 인증·요청 | `/api/v1/` | 전용 키 인증 구현, 수신 주소 설정 후 접수 |
 | 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
+| TTS·임베딩·n8n 워크플로 실행 | 미정 | 미구현 |
 | Raya 난이도 판단 | 동기 JSON | 기존 플랫폼 키·n8n 실행 키·웹 세션 API, CPU 추론·3등급 분기 구현 |
-| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업 분기 → Raya 판단 → L1/L2/L3/폴백 분기 → 뇌대리 AI 게이트웨이 호출 및 결과 정리 연결 완료 |
-| AI 호출 창구 (게이트웨이) | 동기 JSON | 플랫폼 키·n8n 키·웹 세션 API. Raya 판단 → 1→Mistral→3→2 순환 → 캐시 → 사용량 기록 구현 |
-| 공통 AI 사용량 관리 | 뇌대리 usage | `ai_usage` 테이블에 자동 기록. 관리자 조회 API(`GET /api/admin/ai/usage`) 구현 |
-
+| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업·미등록 분기 → Raya → 3등급 분기. 실제 AI 답변은 미연결 |
+| 공통 AI 사용량 관리 | 뇌대리 usage | 연결 설계만 반영. 수집·저장·조회 API 미구현 |
 
 ## n8n AI 작업 분기 초안
 
@@ -29,9 +28,9 @@
 
 외부 서비스의 AI·n8n 요청은 **외부 서비스 → 플랫폼 → 뇌대리 → n8n** 순서로 연결한다. 플랫폼은 파일서비스 연동과 동일한 `NOEDAERI_PLATFORM_API_KEY`를 `X-Noedaeri-API-Key` 헤더로 전달한다. 개별 앱에 뇌대리 키나 n8n 관리 키를 배포하지 않는다. 웹 관리·검수는 기존 플랫폼 로그인·승인 세션을 사용한다.
 
-현재 플랫폼에서 실제 호출할 수 있는 AI 기능은 `POST /api/v1/ai/generate` AI 공급자 호출과 `POST /api/v1/ai/raya/route` 난이도 판단이다. 플랫폼 요청에는 요청 ID·작업 종류가 연계되며 뇌대리에서 라우팅·순환 폴백·캐시·사용량을 일원화 관리한다. n8n 워크플로는 내부 전용 키(`X-Noedaeri-Raya-Key`)를 통해 동일한 뇌대리 게이트웨이(`POST /api/ai/v1/generate`)를 호출하여 답변을 생성한다.
+현재 플랫폼에서 실제 호출할 수 있는 AI 기능은 아래 `POST /api/v1/ai/raya/route` 난이도 판단이다. n8n 작업 접수·실행·결과 수령·usage 조회 API는 아직 미구현이며 수동 초안을 외부 작업 실행 API로 안내하지 않는다. 향후 플랫폼 접수에는 요청 ID·작업 종류·플랫폼이 확인한 서비스/사용자 식별을 연결하고 뇌대리에서 라우팅·캐시·사용량·실행 상태를 관리한다. n8n에는 검증된 작업만 실행용 인증으로 전달하며 n8n 관리 API 키를 외부 요청 인증에 재사용하지 않는다.
 
-[가져오기용 워크플로 JSON](https://github.com/shnea/noedaeri/blob/main/examples/n8n_ai_routing_sample.json)을 제공한다. 수동 실행 → 가상 요청 → 작업 종류 분기 → 지침 전달 → 실제 Raya 추론 → 성능 등급 분기 → 뇌대리 게이트웨이 AI 답변 호출 → 결과 정리 순서다. 각 분기의 `instruction`은 기본 샘플 지침이 연결되어 있으며 추후 작업별 세부 지침을 보강할 수 있다.
+[가져오기용 워크플로 JSON](https://github.com/shnea/noedaeri/blob/main/examples/n8n_ai_routing_sample.json)을 제공한다. 수동 실행 → 가상 요청 → 작업 종류 분기 → 빈 지침 → 실제 Raya 추론 → 성능 등급 분기 순서다. 각 분기의 `instruction`을 비워 두었다. 실제 검색·화면 생성·AI 답변·학습 데이터 수집·파인튜닝은 연결하지 않았다.
 
 | `task_type` | 작업 |
 |---|---|
@@ -44,23 +43,22 @@
 | `code.analyze` | 코드 분석 |
 | `chat.general` | 일반 질답 |
 
-입력은 `{ "task_type": "blog.tags", "prompt": "샘플 글" }` 형태다. 기본 샘플 노드는 8개 작업과 미등록 작업을 각각 하나씩 생성한다. 결과는 입력을 유지하고 `task_name`, `instruction`을 추가한다. 등록되지 않은 작업은 별도 분기에서 `status: "unsupported_task"`로 표시하며 일반 질답으로 자동 처리하지 않는다.
+입력은 `{ "task_type": "blog.tags", "prompt": "샘플 글" }` 형태다. 기본 샘플 노드는 8개 작업과 미등록 작업을 각각 하나씩 생성한다. 결과는 입력을 유지하고 `task_name`, 빈 `instruction`, `status: "awaiting_instructions"`를 추가한다. 등록되지 않은 작업은 별도 분기에서 `status: "unsupported_task"`로 표시하며 일반 질답으로 자동 처리하지 않는다. 노드 자체의 오류는 n8n 실행 실패로 남고 재시도 설정은 없다.
 
-Raya 판단은 `routing` 아래 원래 요청과 합쳐 제공한다. HTTP 노드는 뇌대리 게이트웨이를 호출하고 실패 시 실행을 중단한다. 등급 Switch는 `routing.model_tier`의 `L1`, `L2`, `L3`를 각각의 게이트웨이 호출 HTTP 노드로 보낸다. 뇌대리 게이트웨이 내부에서 한도 소진 시 자동으로 L3→L2→L1→Mistral 순환으로 대체한다.
+Raya 판단은 `routing` 아래 원래 요청과 합쳐 제공한다. HTTP 노드는 한 번에 한 요청씩 호출하고 실패 시 실행을 중단한다. 등급 Switch는 `routing.model_tier`의 `L1`, `L2`, `L3`를 지정된 공급자 연결 대기 분기로 보낸다. 순환 후보를 준비하지만 실제 한도 조회·대체 호출은 아직 없다. 예상하지 못한 등급은 별도 확인 분기로 보낸다.
 
-새 작업은 Switch에 `task_type` 규칙을 추가하고 지침 노드를 복제한 뒤 출력에 연결한다. 작업 종류는 모델 성능 등급과 별개다. 공급자 순서는 L1 OpenRouter `openrouter/free`, L2 GroqCloud 무료, L3 Gemini 무료다.
+새 작업은 Switch에 `task_type` 규칙을 추가하고 지침 노드를 복제한 뒤 출력에 연결한다. 작업 종류는 모델 성능 등급과 별개다. 공급자 순서는 L1 OpenRouter `openrouter/free`, L2 GroqCloud 무료, L3 Gemini 무료다. Groq·Gemini의 실제 모델 ID와 공급자 호출은 미연결이다. 공급자의 무료 한도·잔여량·지원 기능 판단은 후속 범위다.
 
-샘플은 n8n 편집 권한으로 수동 실행하며 자동 실행용 웹훅은 없다. 가져오기용 JSON에는 비밀키·실제 서버 주소·Credential ID가 없다. n8n HTTP 노드에 실제 뇌대리 주소와 아래 계약의 Header Auth를 선택한다.
+샘플은 n8n 편집 권한으로 수동 실행하며 자동 실행용 웹훅은 없다. 가져오기용 JSON에는 비밀키·실제 서버 주소·Credential ID가 없다. n8n HTTP 노드에 실제 뇌대리 주소와 아래 계약의 Header Auth를 선택한다. 실행 데이터 보관·삭제는 해당 n8n 인스턴스의 정책을 따르며 뇌대리 웹 테스트의 24시간 보관을 적용하지 않는다. 실제 AI 답변의 호출 한도·결과 수령·학습 데이터 보존 계약은 후속 범위다.
 
 ### 3단계 공급자와 순환 대체
 
 | 단계 | 지정 공급자 | 초안 상태 |
 |---|---|---|
-| L1 | OpenRouter `openrouter/free` | 뇌대리 게이트웨이 호출 연결 완료 |
-| L2 | GroqCloud `openai/gpt-oss-120b` (비전: `qwen/qwen3.8-27b`) | 뇌대리 게이트웨이 호출 연결 완료 |
-| L3 | Gemini `gemini-flash-latest` | 뇌대리 게이트웨이 호출 연결 완료 |
-| 폴백 | Mistral `ministral-8b-latest` | 뇌대리 게이트웨이 호출 연결 완료 |
-
+| L1 | OpenRouter `openrouter/free` | 연결 대기 |
+| L2 | GroqCloud 무료 티어 | 실제 모델 ID·연결 대기 |
+| L3 | Gemini 무료 티어 | 실제 모델 ID·연결 대기 |
+| 폴백 | Mistral 직접 API · 무료 모드 | 실제 모델 ID·인증·한도·연결 대기 |
 
 Raya가 L1~L3 중 하나를 직접 판단하며, 초안의 `provider_plan`은 선택 단계부터 **L3→L2→L1→Mistral 폴백→L3** 순환 순서로 후보를 준비한다. 시작별 후보는 다음과 같다.
 
@@ -172,96 +170,6 @@ usage와 학습 데이터는 구분한다. 관리자 검토·파인튜닝을 위
 | 504 | `raya_timeout` — 자식 프로세스 종료·회수 후 실패. 제한적으로 새 요청 가능 |
 
 자동 재시도와 임의 등급으로의 우회는 하지 않는다. 실패 시 종료를 확인하기 전 같은 실행 자원을 재배정하지 않는다. n8n 워크플로에서도 실패를 표시하고 실제 AI 호출을 진행하지 않는다.
-
-## AI 호출 창구 (게이트웨이) API
-
-AI 호출은 뇌대리 게이트웨이에서 일원화 관리한다. Raya 난이도 판단(또는 지정된 등급)을 바탕으로 시작 등급을 정하고, **L3 → L2 → L1 → Mistral 폴백 → L3** 순환 링을 따라 공급자를 호출한다. 한도 소진(429/402) 발생 시 해당 공급자를 일시 쿨다운(Retry-After 반영)하고 다음 순환 공급자로 즉시 전환하며, 전체가 소진되었을 때만 정해진 안내 메시지로 종료한다. 결과 캐시(기본 24시간, 자동 만료 정리)와 요청별 사용량 통계(`ai_usage` 테이블)를 함께 관리한다.
-
-| 용도 | 메서드·경로 | 인증 |
-|---|---|---|
-| 플랫폼의 AI 호출 | `POST /api/v1/ai/generate` | 기존 `X-Noedaeri-API-Key` 플랫폼 키 |
-| n8n 작업 중 AI 호출 | `POST /api/ai/v1/generate` | `X-Noedaeri-Raya-Key` 내부 전용 키 |
-| 승인 사용자 웹 테스트 | `POST /api/ai/generate` | 현재 승인된 세션 + Origin·CSRF |
-| 관리자 공급자 상태 조회 | `GET /api/admin/ai/status` | 현재 관리자 세션 |
-| 관리자 사용량 통계 조회 | `GET /api/admin/ai/usage?days=7` | 현재 관리자 세션 (1~90일) |
-
-### 공급자 및 기본 모델 구성
-
-| 슬롯 | 공급자 | 기본 텍스트 모델 | 비전 모델 |
-|---|---|---|---|
-| L1 | OpenRouter | `openrouter/free` | `openrouter/free` |
-| L2 | Groq | `openai/gpt-oss-120b` | `qwen/qwen3.8-27b` |
-| L3 | Gemini | `gemini-flash-latest` | `gemini-flash-latest` |
-| FALLBACK | Mistral | `ministral-8b-latest` | `ministral-8b-latest` |
-
-### 요청 형식 (`POST /api/v1/ai/generate`, `/api/ai/v1/generate`, `/api/ai/generate`)
-
-```json
-{
-  "task_type": "blog.summary",
-  "service": "platform",
-  "request_id": "req-20261005-001",
-  "prompt": "분석 또는 요약할 본문 내용",
-  "instruction": "한국어로 간결하게 요약해 주세요.",
-  "images": [],
-  "tier": null,
-  "cache": true,
-  "max_tokens": 1000,
-  "temperature": 0.7
-}
-```
-
-- `task_type`: 1~80자 소문자 식별자 (예: `blog.tags`, `blog.summary`, `chat.general` 등).
-- `service`: 요청 서비스 이름 (플랫폼 경로는 자동 `platform`, 웹은 `web`, n8n은 `n8n`).
-- `request_id`: 선택적 외부 요청 ID. 사용량 로그에 연계되어 중복 집계를 추적할 수 있음.
-- `prompt`: 공백 제외 1~200,000자 본문.
-- `instruction`: 시스템 지침 (선택, 최대 40,000자).
-- `images`: Base64 data URL(`data:image/...;base64,...`) 또는 HTTPS URL 목록 (최대 4개). 이미지가 전달되면 비전을 지원하는 모델로만 분기함.
-- `tier`: 시작 등급을 수동 지정(`"L1"`, `"L2"`, `"L3"`)하거나 생략(`null`) 시 Raya가 텍스트를 분석해 자동 추천함.
-- `cache`: 결과 캐시 사용 여부 (기본 `true`). 동일 작업·지침·프롬프트·이미지·옵션 요청 시 모델 호출 없이 캐시에서 즉시 반환함.
-
-### 응답 형식
-
-성공 시 (HTTP 200):
-```json
-{
-  "text": "요약된 답변 본문...",
-  "slot": "L3",
-  "provider": "gemini",
-  "model": "gemini-flash-latest",
-  "recommended_tier": "L3",
-  "usage": {
-    "input_tokens": 120,
-    "output_tokens": 45
-  },
-  "cache_hit": false,
-  "raya_error": null,
-  "attempts": [
-    {"slot": "L3", "provider": "gemini", "result": "succeeded", "model": "gemini-flash-latest", "ms": 420}
-  ],
-  "usage_id": "9c123456-..."
-}
-```
-
-토큰 소진 시 (HTTP 503):
-```json
-{
-  "detail": "ai_tokens_exhausted",
-  "message": "현재 사용 가능한 AI 토큰이 없습니다. 한도 갱신 후 다시 시도해 주세요.",
-  "recommended_tier": "L1",
-  "attempts": [
-    {"slot": "L1", "provider": "openrouter", "result": "exhausted", "http_status": 429, "ms": 120},
-    {"slot": "FALLBACK", "provider": "mistral", "result": "exhausted", "http_status": 429, "ms": 150},
-    {"slot": "L3", "provider": "gemini", "result": "exhausted", "http_status": 429, "ms": 200},
-    {"slot": "L2", "provider": "groq", "result": "exhausted", "http_status": 429, "ms": 110}
-  ],
-  "usage_id": "9c123456-..."
-}
-```
-
-- 공급자가 토큰 수를 제공하지 않는 경우 0으로 왜곡하지 않고 `null`로 기록함.
-- 만료된 캐시는 30초 주기 정기 유지보수 루프에서 자동 정리됨.
-- 관리자 권한으로 `GET /api/admin/ai/status`에서 공급자별 쿨다운 상태, `GET /api/admin/ai/usage`에서 기간별 토큰 사용량 및 통계를 조회할 수 있음.
 
 ## 플랫폼 기능 대응 현황
 

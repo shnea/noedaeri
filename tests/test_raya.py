@@ -214,7 +214,8 @@ def test_platform_routing_reuses_existing_key_without_internal_or_session_access
     )
     for key in ("incorrect", app.state.settings.worker_key):
         assert (
-            client.post(path, json=PAYLOAD, headers={"X-Noedaeri-API-Key": key}).status_code == 401
+            client.post(path, json=PAYLOAD, headers={"X-Noedaeri-API-Key": key}).status_code
+            == 401
         )
     headers = {"X-Noedaeri-API-Key": app.state.settings.integration_key}
     client.cookies.clear()

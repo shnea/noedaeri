@@ -744,107 +744,41 @@
     },
     {
       "id": "6bfd4354-8015-556d-b65c-7af02ca2588d",
-      "name": "L1 · OpenRouter Free · 호출",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "name": "L1 · OpenRouter Free · 연결 대기",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
       "position": [
         2260,
         240
       ],
-      "parameters": {
-        "method": "POST",
-        "url": "https://noedaeri.example/api/ai/v1/generate",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({task_type: $json.task_type, prompt: $json.prompt, instruction: $json.instruction || \"\", tier: \"L1\", cache: true}) }}",
-        "options": {
-          "timeout": 120000,
-          "batching": {
-            "batch": {
-              "batchSize": 1,
-              "batchInterval": 0
-            }
-          },
-          "response": {
-            "response": {
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "notes": "뇌대리 게이트웨이(L1 시작)를 호출합니다. OpenRouter 한도 소진 시 L1→Mistral→L3→L2 순환으로 자동 대체됩니다.",
+      "parameters": {},
+      "notes": "이 분기에 향후 실제 AI 공급자 호출을 연결합니다.",
       "notesInFlow": true
     },
     {
       "id": "24f84eef-3afc-5a74-8088-1d319b2c882e",
-      "name": "L2 · Groq Free · 호출",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "name": "L2 · Groq Free · 연결 대기",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
       "position": [
         2260,
         430
       ],
-      "parameters": {
-        "method": "POST",
-        "url": "https://noedaeri.example/api/ai/v1/generate",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({task_type: $json.task_type, prompt: $json.prompt, instruction: $json.instruction || \"\", tier: \"L2\", cache: true}) }}",
-        "options": {
-          "timeout": 120000,
-          "batching": {
-            "batch": {
-              "batchSize": 1,
-              "batchInterval": 0
-            }
-          },
-          "response": {
-            "response": {
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "notes": "뇌대리 게이트웨이(L2 시작)를 호출합니다. Groq 한도 소진 시 L2→L1→Mistral→L3 순환으로 자동 대체됩니다.",
+      "parameters": {},
+      "notes": "이 분기에 향후 실제 AI 공급자 호출을 연결합니다.",
       "notesInFlow": true
     },
     {
       "id": "bb7a0bfa-7070-5c3a-b7f7-9af794f3b4e6",
-      "name": "L3 · Gemini Free · 호출",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "name": "L3 · Gemini Free · 연결 대기",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
       "position": [
         2260,
         620
       ],
-      "parameters": {
-        "method": "POST",
-        "url": "https://noedaeri.example/api/ai/v1/generate",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({task_type: $json.task_type, prompt: $json.prompt, instruction: $json.instruction || \"\", tier: \"L3\", cache: true}) }}",
-        "options": {
-          "timeout": 120000,
-          "batching": {
-            "batch": {
-              "batchSize": 1,
-              "batchInterval": 0
-            }
-          },
-          "response": {
-            "response": {
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "notes": "뇌대리 게이트웨이(L3 시작)를 호출합니다. Gemini 한도 소진 시 L3→L2→L1→Mistral 순환으로 자동 대체됩니다.",
+      "parameters": {},
+      "notes": "이 분기에 향후 실제 AI 공급자 호출을 연결합니다.",
       "notesInFlow": true
     },
     {
@@ -998,37 +932,15 @@
     },
     {
       "id": "ab5b3409-ca94-5133-9efd-6bcf4d264a81",
-      "name": "폴백 · Mistral API · 호출",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "name": "폴백 · Mistral API · 연결 대기",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
       "position": [
-        2260,
-        1000
+        1940,
+        1100
       ],
-      "parameters": {
-        "method": "POST",
-        "url": "https://noedaeri.example/api/ai/v1/generate",
-        "authentication": "genericCredentialType",
-        "genericAuthType": "httpHeaderAuth",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({task_type: $json.task_type, prompt: $json.prompt, instruction: $json.instruction || \"\", tier: \"FALLBACK\", cache: true}) }}",
-        "options": {
-          "timeout": 120000,
-          "batching": {
-            "batch": {
-              "batchSize": 1,
-              "batchInterval": 0
-            }
-          },
-          "response": {
-            "response": {
-              "responseFormat": "json"
-            }
-          }
-        }
-      },
-      "notes": "뇌대리 게이트웨이(Mistral 폴백)를 호출합니다. 한도 소진 시 FALLBACK→L3→L2→L1 순환으로 자동 대체됩니다.",
+      "parameters": {},
+      "notes": "L1 다음에 Mistral 직접 API를 확인하고 소진됐으면 L3로 순환합니다. 모델 ID·인증·무료 모드 접근·이미지/도구/출력 형식 지원을 연결할 때 확인합니다. 현재 실제 호출은 없습니다.",
       "notesInFlow": true
     },
     {
@@ -1044,21 +956,6 @@
         "jsCode": "return $input.all().map((item, index) => ({json: {...item.json, status: 'no_tokens_available', message: '현재 사용 가능한 AI 토큰이 없습니다. 한도 갱신 후 다시 시도해 주세요.'}, pairedItem: {item: index}}));"
       },
       "notes": "네 공급자를 한 번씩 확인해 소진을 확인한 경우에만 연결합니다. 현재 한도 조회가 없어 자동으로 이 분기를 선택하지 않습니다. 실제 서비스 응답 연결은 후속입니다.",
-      "notesInFlow": true
-    },
-    {
-      "id": "8f2c3b4a-1d2e-4f5a-9b8c-7d6e5f4a3b2c",
-      "name": "AI 결과 정리",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        2560,
-        520
-      ],
-      "parameters": {
-        "jsCode": "return $input.all().map((item, index) => {\n  const req = $(\"공급자·순환 후보 준비\").itemMatching(index)?.json || {};\n  const res = item.json;\n  return {\n    json: {\n      task_type: req.task_type,\n      task_name: req.task_name,\n      prompt: req.prompt,\n      instruction: req.instruction,\n      routing: req.routing,\n      status: res.text ? \"succeeded\" : (res.detail || \"failed\"),\n      ai_result: {\n        text: res.text,\n        slot: res.slot,\n        provider: res.provider,\n        model: res.model,\n        usage: res.usage,\n        cache_hit: res.cache_hit,\n        attempts: res.attempts,\n        usage_id: res.usage_id,\n      },\n    },\n    pairedItem: { item: index },\n  };\n});"
-      },
-      "notes": "작업 요청 정보와 뇌대리 AI 게이트웨이의 최종 답변·사용량·호출 이력을 하나의 결과로 통합합니다.",
       "notesInFlow": true
     }
   ],
@@ -1277,21 +1174,21 @@
       "main": [
         [
           {
-            "node": "L1 · OpenRouter Free · 호출",
+            "node": "L1 · OpenRouter Free · 연결 대기",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "L2 · Groq Free · 호출",
+            "node": "L2 · Groq Free · 연결 대기",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "L3 · Gemini Free · 호출",
+            "node": "L3 · Gemini Free · 연결 대기",
             "type": "main",
             "index": 0
           }
@@ -1327,7 +1224,7 @@
         ],
         [
           {
-            "node": "폴백 · Mistral API · 호출",
+            "node": "폴백 · Mistral API · 연결 대기",
             "type": "main",
             "index": 0
           }
@@ -1342,50 +1239,6 @@
         [
           {
             "node": "판단 결과 확인 필요",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "L1 · OpenRouter Free · 호출": {
-      "main": [
-        [
-          {
-            "node": "AI 결과 정리",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "L2 · Groq Free · 호출": {
-      "main": [
-        [
-          {
-            "node": "AI 결과 정리",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "L3 · Gemini Free · 호출": {
-      "main": [
-        [
-          {
-            "node": "AI 결과 정리",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "폴백 · Mistral API · 호출": {
-      "main": [
-        [
-          {
-            "node": "AI 결과 정리",
             "type": "main",
             "index": 0
           }
