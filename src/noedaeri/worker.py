@@ -141,6 +141,8 @@ def run():
                                 capacity_alive,
                                 stage,
                                 reserve,
+                                encoder=settings.video_encoder,
+                                resource_root=storage.root,
                             )
                         else:
                             reserve(2_097_152)

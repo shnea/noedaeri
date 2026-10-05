@@ -81,6 +81,8 @@ const messages = new Map(
     unsupported_media: "지원하지 않는 영상입니다.",
     invalid_job_options: "작업 옵션을 확인해 주세요.",
     invalid_media_or_conversion_failed: "영상을 읽거나 변환하지 못했습니다.",
+    hardware_encoding_failed:
+      "하드웨어 영상 변환이 실패했습니다. 관리자에게 인코더 상태와 CPU 전환 설정을 확인해 달라고 요청해 주세요.",
     processing_timeout: "작업 제한시간을 초과했습니다.",
     lease_lost:
       "실행이 중단되었습니다. 종료 확인 후 실패 상태에서 다시 요청할 수 있습니다.",

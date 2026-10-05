@@ -152,16 +152,22 @@ if (job.status === 'uploading') {
 - 입력 검사·결과 공간 예약 → 썸네일 → 해상도별 변환 → HLS 재생 목록과 ZIP 생성 순서입니다.
 - 원본의 짧은 변을 기준으로 480p·720p·1080p 중 가능한 크기만 생성합니다. 작은 영상을 확대하지 않습니다. 480p 미만은 원본 짧은 변의 짝수 크기를 사용합니다.
 - 출력은 H.264/AAC, 30fps, 약 6초 단위 MPEG-TS VOD입니다. 오디오 없는 입력도 처리합니다.
-- CPU로 해상도별 순차 변환합니다. GPU 변환은 아직 구현하지 않았습니다.
+- 해상도별 순차 변환합니다. 별도 입력 없이 기본 `auto`로 macOS VideoToolbox 하드웨어 디코딩·H.264 인코딩을 우선 시도하고, 가속 변환 실패 시 CPU로 한 번 전환합니다. 다른 OS는 CPU입니다. 크기 조정·썸네일은 CPU로 처리합니다. `FFMPEG_VIDEO_ENCODER`는 서버의 선택적 운영 설정이며 요청 `options`에는 넣지 않습니다.
 - 모든 단계가 끝나야 결과를 공개합니다. 단계별 부분 성공·이어하기는 아직 지원하지 않습니다.
 
-`stage`에는 `probing`, `reserving`, `thumbnail`, `encoding_480p` 같은 해상도별 단계, `packaging`, `finished`가 표시됩니다. 실패·취소 시 마지막 단계를 보존합니다. 정확한 백분율 진행률은 아직 제공하지 않습니다.
+`stage`에는 `probing`, `reserving`, `thumbnail`, `encoding_480p` 같은 해상도별 단계, `packaging`, `finished`가 표시됩니다. `waiting_hardware_encoder`는 같은 저장 루트의 다른 작업이 하드웨어 인코더를 사용 중이라는 뜻입니다. 대기도 전체 30분 제한에 포함하며 취소할 수 있습니다. 실패·취소 시 마지막 단계를 보존합니다. 정확한 백분율 진행률은 아직 제공하지 않습니다.
+
+기본 `auto`에서는 하드웨어 실행이 실패하면 자식 종료·슬롯 반환을 확인하고 미완성 해상도별 출력을 삭제한 뒤 전체 해상도를 CPU로 한 번 재변환합니다. `cpu_fallback` 단계와 결과 `hardware_fallback=true`로 전환을 알립니다. CPU 재변환도 실패하면 작업을 실패로 종료합니다. 취소·시간 초과·저장 공간 부족은 CPU 재시도를 하지 않으며 전체 제한시간은 유지합니다. 서버 관리자가 `h264_videotoolbox`로 고정한 경우에는 CPU 전환 없이 `hardware_encoding_failed`로 종료하고, `libx264`는 CPU 고정입니다. 실패한 작업의 새 요청에는 새 작업 ID·원본 재업로드를 사용합니다.
+
+결과의 `video_encoder`에 실제 사용한 인코더, `hardware_fallback`에 가속 실패 후 CPU 전환 여부를 기록하고 웹에 표시합니다. 기존 결과에는 이 필드가 없을 수 있습니다. 인증·업로드 한도·다운로드·웹 24시간/플랫폼 별도 보존·저장 확인 계약은 동일하게 적용합니다.
 
 완료 결과 형식 예시입니다. 실제 파일 목록과 해상도는 원본에 따라 달라집니다.
 
 ```json
 {
   "type": "video_package",
+  "video_encoder": "h264_videotoolbox",
+  "hardware_fallback": false,
   "master": "master.m3u8",
   "thumbnail": "thumbnail.jpg",
   "download": "video.zip",
@@ -183,7 +189,7 @@ if (job.status === 'uploading') {
 | 영상 입력 | 최대 5GiB (5,368,709,120바이트), MP4/MOV·Matroska/WebM |
 | 영상 | 최대 1시간, 각 변 4096px 이하·850만 픽셀 이하 |
 | 실행 제한 | 썸네일 120초, 통합 작업 전체 30분 |
-| 동시 실행 | 워커당 한 작업 |
+| 동시 실행 | 워커당 한 작업. 같은 저장 루트의 하드웨어 인코딩은 한 작업씩 배정 |
 | 결과 보관 | 웹 테스트 완료 후 24시간, `expires_at` 확인 |
 | 입력·중간 파일 | 종료 후 정리, 실행 중 파일은 정리하지 않음 |
 | 플랫폼 결과 보존 | 저장 확인까지 유지하되 기본 최대 7일. 아래 플랫폼 계약 참조 |

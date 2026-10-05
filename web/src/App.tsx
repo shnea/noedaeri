@@ -75,6 +75,8 @@ function Details({
       type: z.literal("video_package"),
       duration_seconds: z.number().optional(),
       total_bytes: z.number().optional(),
+      video_encoder: z.enum(["libx264", "h264_videotoolbox"]).optional(),
+      hardware_fallback: z.boolean().optional(),
       variants: z.array(z.object({ label: z.string(), playlist: z.string() })),
     })
     .safeParse(job.result);
@@ -85,6 +87,11 @@ function Details({
         ["thumbnail", "썸네일 생성 중"],
         ["probing", "영상 정보 분석 중"],
         ["reserving", "결과 저장 공간 예약 중"],
+        ["cpu_fallback", "하드웨어 가속을 사용할 수 없어 CPU로 전환 중입니다."],
+        [
+          "waiting_hardware_encoder",
+          "다른 작업이 하드웨어 인코더를 사용 중입니다. 종료 후 시작합니다.",
+        ],
         ["image_processing", "이미지 검사·썸네일·미리보기 생성 중"],
         ["packaging", "결과 묶음 생성 중"],
       ]).get(job.stage);
@@ -248,6 +255,16 @@ function Details({
                 variants={videoPackage.data.variants}
               />
             )}
+            {videoPackage.success &&
+              videoPackage.data.video_encoder !== undefined && (
+                <p>
+                  {videoPackage.data.video_encoder === "h264_videotoolbox"
+                    ? "하드웨어 가속으로 변환한 영상"
+                    : videoPackage.data.hardware_fallback
+                      ? "하드웨어 가속을 사용할 수 없어 CPU로 변환한 영상"
+                      : "CPU로 변환한 영상"}
+                </p>
+              )}
             {videoPackage.success &&
               videoPackage.data.duration_seconds !== undefined && (
                 <p>

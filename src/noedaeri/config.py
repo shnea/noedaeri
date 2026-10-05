@@ -26,10 +26,12 @@ class Settings:
     webhook_url: str = ""
     webhook_secret: str = ""
     platform_result_ttl: int = 604800
+    video_encoder: str = "auto"
 
     @classmethod
     def from_env(cls):
         settings = cls(
+            video_encoder=os.environ.get("FFMPEG_VIDEO_ENCODER") or "auto",
             integration_key=os.environ.get("NOEDAERI_PLATFORM_API_KEY", ""),
             webhook_url=os.environ.get("NOEDAERI_PLATFORM_WEBHOOK_URL", ""),
             webhook_secret=os.environ.get("NOEDAERI_PLATFORM_WEBHOOK_SECRET", ""),
@@ -46,6 +48,8 @@ class Settings:
             admin_issuer=os.environ.get("ADMIN_OIDC_ISSUER", ""),
             admin_subject=os.environ.get("ADMIN_OIDC_SUBJECT", ""),
         )
+        if settings.video_encoder not in {"auto", "libx264", "h264_videotoolbox"}:
+            raise ValueError("Unsupported FFMPEG_VIDEO_ENCODER")
         if settings.upload_limit <= 0 or settings.storage_limit <= settings.upload_limit:
             raise ValueError("Storage capacity must exceed the positive upload limit")
         if settings.integration_key and len(settings.integration_key) < 32:

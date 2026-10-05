@@ -1,13 +1,15 @@
 import json
 import math
 import os
+import platform
 import signal
 import subprocess
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 
-from .execution import inherited_lock
+from .execution import hardware_encoder_lock, inherited_encoder_lock, inherited_lock
 
 
 class MediaError(Exception):
@@ -18,7 +20,13 @@ class JobCancelled(Exception):
     pass
 
 
-def run_process(args: list[str], timeout: float, alive: Callable[[], bool], capture=False):
+def run_process(
+    args: list[str],
+    timeout: float,
+    alive: Callable[[], bool],
+    capture=False,
+    failure_code="invalid_media_or_conversion_failed",
+):
     # No inherited credentials, shell, network protocols, or unbounded stderr buffers.
     env = {"PATH": os.environ.get("PATH", ""), "LANG": "C", "AV_LOG_FORCE_NOCOLOR": "1"}
     with subprocess.Popen(
@@ -28,7 +36,9 @@ def run_process(args: list[str], timeout: float, alive: Callable[[], bool], capt
         stderr=subprocess.DEVNULL,
         start_new_session=True,
         env=env,
-        pass_fds=(() if inherited_lock.get() is None else (inherited_lock.get(),)),
+        pass_fds=tuple(
+            fd for fd in (inherited_lock.get(), inherited_encoder_lock.get()) if fd is not None
+        ),
     ) as process:
         deadline = time.monotonic() + timeout
         try:
@@ -43,7 +53,7 @@ def run_process(args: list[str], timeout: float, alive: Callable[[], bool], capt
                 except subprocess.TimeoutExpired:
                     continue
             if process.returncode:
-                raise MediaError("invalid_media_or_conversion_failed")
+                raise MediaError(failure_code)
             return output
         finally:
             if process.poll() is None:
@@ -133,8 +143,48 @@ def thumbnail(source: Path, output: Path, seconds: float, timeout: int, alive: C
         raise MediaError("result_missing")
 
 
-def video_package(source, folder, seconds, timeout, alive, stage, reserve=lambda size: None):
+@contextmanager
+def video_encoding_slot(root, encoder, alive, remaining, stage):
+    if encoder == "libx264":
+        yield
+        return
+    waiting = False
+    while True:
+        if not alive():
+            raise JobCancelled()
+        remaining()
+        # Catch contention only during acquisition, never retry a failed conversion.
+        lock = hardware_encoder_lock(root)
+        try:
+            lock.__enter__()
+        except BlockingIOError:
+            if not waiting:
+                stage("waiting_hardware_encoder")
+                waiting = True
+            time.sleep(0.2)
+            continue
+        try:
+            yield
+        finally:
+            lock.__exit__(None, None, None)
+        return
+
+
+def video_package(
+    source,
+    folder,
+    seconds,
+    timeout,
+    alive,
+    stage,
+    reserve=lambda size: None,
+    *,
+    encoder="auto",
+    resource_root=None,
+):
     """Produce flat, relative HLS paths suitable for authenticated delivery or export."""
+    if encoder not in {"auto", "libx264", "h264_videotoolbox"}:
+        raise MediaError("unsupported_video_encoder")
     try:
         folder.mkdir(parents=True, exist_ok=False, mode=0o700)
     except FileExistsError:
@@ -211,98 +261,142 @@ def video_package(source, folder, seconds, timeout, alive, stage, reserve=lambda
     thumbnail(source, folder / "thumbnail.jpg", seconds, remaining(), alive)
     master = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-INDEPENDENT-SEGMENTS"]
     variants = []
-    for level in levels:
-        if level < 2:
-            raise MediaError("unsupported_media")
-        scale = min(level / short, 4096 / width, 4096 / height)
-        w, h = int(width * scale) // 2 * 2, int(height * scale) // 2 * 2
-        name = f"{level}p.m3u8"
-        bitrate = 1200 if level <= 480 else 2800 if level <= 720 else 5000
-        stage(f"encoding_{level}p")
-        run_process(
-            [
-                "ffmpeg",
-                "-nostdin",
-                "-y",
-                "-v",
-                "error",
-                "-protocol_whitelist",
-                "file",
-                "-format_whitelist",
-                "mov,matroska,webm",
-                "-threads",
-                "1",
-                "-i",
-                str(source),
-                "-map",
-                "0:v:0",
-                "-map",
-                "0:a:0?",
-                "-sn",
-                "-dn",
-                "-vf",
-                f"scale={w}:{h},setsar=1",
-                "-r",
-                "30",
-                "-c:v",
-                "libx264",
-                "-preset",
-                "veryfast",
-                "-pix_fmt",
-                "yuv420p",
-                "-threads",
-                "2",
-                "-b:v",
-                f"{bitrate}k",
-                "-maxrate",
-                f"{bitrate}k",
-                "-bufsize",
-                f"{bitrate * 2}k",
-                "-g",
-                "180",
-                "-keyint_min",
-                "180",
-                "-sc_threshold",
-                "0",
-                "-force_key_frames",
-                "expr:gte(t,n_forced*6)",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                "-ac",
-                "2",
-                "-f",
-                "hls",
-                "-hls_time",
-                "6",
-                "-hls_list_size",
-                "0",
-                "-hls_playlist_type",
-                "vod",
-                "-hls_flags",
-                "independent_segments",
-                "-hls_segment_filename",
-                str(folder / f"{level}p-%05d.ts"),
-                str(folder / name),
-            ],
-            remaining(),
-            alive,
+    selected_encoder = (
+        ("h264_videotoolbox" if platform.system() == "Darwin" else "libx264")
+        if encoder == "auto"
+        else encoder
+    )
+    hardware_fallback = False
+
+    def encode_variants():
+        encoder_options = (
+            ["-preset", "veryfast", "-keyint_min", "180", "-sc_threshold", "0"]
+            if selected_encoder == "libx264"
+            else ["-allow_sw", "0"]
         )
-        master.extend(
-            [f"#EXT-X-STREAM-INF:BANDWIDTH={(bitrate + 128) * 1100},RESOLUTION={w}x{h}", name]
-        )
-        variants.append(
-            {
-                "label": f"{level}p",
-                "width": w,
-                "height": h,
-                "playlist": name,
-                "video_bitrate": bitrate * 1000,
-                "bandwidth": (bitrate + 128) * 1100,
-                "bytes": sum(p.stat().st_size for p in folder.glob(f"{level}p*")),
-            }
-        )
+        with video_encoding_slot(
+            resource_root or folder.parent, selected_encoder, alive, remaining, stage
+        ):
+            for level in levels:
+                if level < 2:
+                    raise MediaError("unsupported_media")
+                scale = min(level / short, 4096 / width, 4096 / height)
+                w, h = int(width * scale) // 2 * 2, int(height * scale) // 2 * 2
+                name = f"{level}p.m3u8"
+                bitrate = 1200 if level <= 480 else 2800 if level <= 720 else 5000
+                stage(f"encoding_{level}p")
+                run_process(
+                    [
+                        "ffmpeg",
+                        "-nostdin",
+                        "-y",
+                        "-v",
+                        "error",
+                        "-protocol_whitelist",
+                        "file",
+                        "-format_whitelist",
+                        "mov,matroska,webm",
+                        "-threads",
+                        "1",
+                        *(
+                            ["-hwaccel", "videotoolbox"]
+                            if selected_encoder == "h264_videotoolbox"
+                            else []
+                        ),
+                        "-i",
+                        str(source),
+                        "-map",
+                        "0:v:0",
+                        "-map",
+                        "0:a:0?",
+                        "-sn",
+                        "-dn",
+                        "-vf",
+                        f"scale={w}:{h},setsar=1",
+                        "-r",
+                        "30",
+                        "-c:v",
+                        selected_encoder,
+                        *encoder_options,
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-threads",
+                        "2",
+                        "-b:v",
+                        f"{bitrate}k",
+                        "-maxrate",
+                        f"{bitrate}k",
+                        "-bufsize",
+                        f"{bitrate * 2}k",
+                        "-g",
+                        "180",
+                        "-force_key_frames",
+                        "expr:gte(t,n_forced*6)",
+                        "-c:a",
+                        "aac",
+                        "-b:a",
+                        "128k",
+                        "-ac",
+                        "2",
+                        "-f",
+                        "hls",
+                        "-hls_time",
+                        "6",
+                        "-hls_list_size",
+                        "0",
+                        "-hls_playlist_type",
+                        "vod",
+                        "-hls_flags",
+                        "independent_segments",
+                        "-hls_segment_filename",
+                        str(folder / f"{level}p-%05d.ts"),
+                        str(folder / name),
+                    ],
+                    remaining(),
+                    alive,
+                    failure_code=(
+                        "hardware_encoding_failed"
+                        if selected_encoder == "h264_videotoolbox"
+                        else "invalid_media_or_conversion_failed"
+                    ),
+                )
+                master.extend(
+                    [
+                        f"#EXT-X-STREAM-INF:BANDWIDTH={(bitrate + 128) * 1100},RESOLUTION={w}x{h}",
+                        name,
+                    ]
+                )
+                variants.append(
+                    {
+                        "label": f"{level}p",
+                        "width": w,
+                        "height": h,
+                        "playlist": name,
+                        "video_bitrate": bitrate * 1000,
+                        "bandwidth": (bitrate + 128) * 1100,
+                        "bytes": sum(p.stat().st_size for p in folder.glob(f"{level}p*")),
+                    }
+                )
+
+    try:
+        encode_variants()
+    except MediaError as error:
+        if encoder != "auto" or str(error) != "hardware_encoding_failed":
+            raise
+        # run_process has reaped the hardware child and released its slot. Remove
+        # only this attempt's rendition files before one full CPU attempt.
+        for level in levels:
+            for partial in folder.glob(f"{level}p*"):
+                partial.unlink()
+        if not alive():
+            raise JobCancelled() from error
+        remaining()
+        selected_encoder = "libx264"
+        hardware_fallback = True
+        variants.clear()
+        del master[3:]
+        stage("cpu_fallback")
+        encode_variants()
     (folder / "master.m3u8").write_text("\n".join(master) + "\n")
     stage("packaging")
     import zipfile
@@ -319,6 +413,8 @@ def video_package(source, folder, seconds, timeout, alive, stage, reserve=lambda
                     target.write(chunk)
     return {
         "type": "video_package",
+        "video_encoder": selected_encoder,
+        "hardware_fallback": hardware_fallback,
         "duration_seconds": duration,
         "frame_rate": 30,
         "estimated_output_bytes": estimate,

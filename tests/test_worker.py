@@ -16,8 +16,34 @@ from conftest import login
 from test_jobs import new_job
 
 
-@pytest.mark.parametrize("kind", ["video.thumbnail", "video.package", "image.package", "platform"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "video.thumbnail",
+        "video.package",
+        "image.package",
+        "platform",
+        pytest.param(
+            "videotoolbox",
+            marks=pytest.mark.skipif(
+                os.environ.get("NOEDAERI_TEST_VIDEOTOOLBOX") != "1",
+                reason="Requires a macOS hardware encoder; enable explicitly",
+            ),
+        ),
+        pytest.param(
+            "auto",
+            marks=pytest.mark.skipif(
+                os.environ.get("NOEDAERI_TEST_VIDEOTOOLBOX") != "1",
+                reason="Requires a macOS hardware encoder; enable explicitly",
+            ),
+        ),
+    ],
+)
 def test_worker_process_calls_api_and_finishes(app, kind):
+    encoder = "h264_videotoolbox" if kind == "videotoolbox" else "libx264"
+    automatic = kind == "auto"
+    if kind in {"videotoolbox", "auto"}:
+        kind = "video.package"
     is_platform = kind == "platform"
     if is_platform:
         from test_integration import create, platform
@@ -79,6 +105,7 @@ def test_worker_process_calls_api_and_finishes(app, kind):
         STORAGE_ROOT=str(settings.storage_root),
         PLATFORM_OIDC_REDIRECT_URI="https://testserver/auth/callback",
         PYTHONPATH=str(Path("src").resolve()),
+        FFMPEG_VIDEO_ENCODER="auto" if automatic else encoder,
     )
     process = subprocess.Popen(
         [sys.executable, "-m", "noedaeri.worker"],
@@ -127,6 +154,8 @@ def test_worker_process_calls_api_and_finishes(app, kind):
         else:
             result = job["result"]
             assert result["type"] == "video_package"
+            assert result["video_encoder"] == ("h264_videotoolbox" if automatic else encoder)
+            assert result["hardware_fallback"] is False
             assert result["duration_seconds"] == 7
             assert result["total_bytes"] == sum(result["file_sizes"].values())
             assert result["total_bytes"] <= result["estimated_output_bytes"]

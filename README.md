@@ -33,6 +33,16 @@ npm run build --prefix web
 
 macOS 사용자 로그인 시 자동 시작하며 프로세스 종료 시 다시 기동한다. 로그인 전 부팅 단계의 서비스는 아니다. `stop`은 현재 실행을 중지하고 DB와 설정을 보존한다. 다음 로그인에는 다시 시작한다. 코드 변경 후 웹을 빌드하고 `restart`한다.
 
+통합 영상 처리는 별도 입력 없이 기본 `auto`로 실행한다. macOS에서는 VideoToolbox 하드웨어 디코딩·H.264 인코딩을 우선 시도하고, 가속 변환 실패 시 미완성 해상도별 출력을 정리한 뒤 CPU로 한 번 전환한다. 다른 OS는 CPU로 실행한다. 스케일링·썸네일은 CPU를 사용한다. 취소·시간 초과·저장 공간 부족은 재시도하지 않으며 전체 제한시간을 새로 시작하지 않는다.
+
+관리자가 방식을 고정해야 할 때만 암호화 운영 설정의 `FFMPEG_VIDEO_ENCODER`를 `auto`, `libx264`(CPU), `h264_videotoolbox`(하드웨어 전용) 중 하나로 지정한다. 예를 들어 CPU 고정은 아래 명령으로 암호화 저장한다. 워커가 작업 중이면 완료를 기다린 뒤 재시작해 적용한다.
+
+```sh
+sops set --input-type dotenv --output-type dotenv config/runtime.enc.env '["FFMPEG_VIDEO_ENCODER"]' '"libx264"'
+```
+
+하드웨어 전용 설정은 자동 CPU 전환을 하지 않는다. 결과에 실제 인코더와 전환 여부를 기록하고 웹에 표시한다. 같은 저장 루트의 하드웨어 작업은 하나씩 실행하며 대기·취소·제한시간을 적용한다. 실제 macOS 하드웨어 검사는 `NOEDAERI_TEST_VIDEOTOOLBOX=1 .venv/bin/python scripts/check.py`로 실행한다. 기본 검사는 하드웨어 전용 검수 항목을 건너뛴다.
+
 새 환경에서만 `scripts/manage.py init --state-dir <영속_경로> --port <진입_포트>`로 초기화한다. 기존 설정이나 비어 있지 않은 디렉터리는 덮어쓰지 않는다. PostgreSQL 17과 nginx가 설치되어 있어야 한다. 생성한 운영 설정은 해당 PC 전용이므로 다른 PC에서 그대로 시작하지 않는다.
 
 실행기는 메모리에서 복호화하여 프로세스에 전달한다. 평문 env는 만들지 않는다. nginx 설정과 launchd 등록 파일은 Git 밖에서 소유자 전용 권한으로 관리한다. 현재 stdout·stderr 및 nginx 접근 로그는 저장하지 않는다. 상세 운영 로그와 회전 정책은 후속 범위다.
