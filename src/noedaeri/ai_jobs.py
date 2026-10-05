@@ -1,8 +1,7 @@
 import asyncio
-import json
 import secrets
-from datetime import UTC, datetime
-from typing import Any, Literal
+from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
@@ -93,9 +92,7 @@ async def run_n8n_workflow(settings: Settings, data: AiJobCreate) -> dict:
         raise HTTPException(502, f"n8n_network_error: {str(exc)[:100]}") from None
 
     if response.status_code != 200:
-        raise HTTPException(
-            502, f"n8n_execution_failed: status {response.status_code}"
-        )
+        raise HTTPException(502, f"n8n_execution_failed: status {response.status_code}")
 
     try:
         return response.json()
@@ -124,7 +121,7 @@ def record_usage(
             job_id, owner_id, project, environment, request_id, task_type,
             provider, model, prompt_tokens, completion_tokens, total_tokens, model_tier
         ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (project, environment, request_id, provider, model) DO NOTHING
+        ON CONFLICT (owner_id, project, environment, request_id, provider, model) DO NOTHING
         """,
         (
             job_id,
@@ -194,9 +191,7 @@ async def execute_or_reuse_ai_job(
         for _ in range(120):
             await asyncio.sleep(0.5)
             with db.connect() as conn:
-                polled = conn.execute(
-                    "SELECT * FROM ai_jobs WHERE id=%s", (job_id,)
-                ).fetchone()
+                polled = conn.execute("SELECT * FROM ai_jobs WHERE id=%s", (job_id,)).fetchone()
                 if polled and polled["status"] in ("succeeded", "failed", "cancelled"):
                     res = _serialize_job(polled)
                     res["reused"] = True
@@ -262,7 +257,8 @@ async def _run_and_save(
             conn.execute(
                 """
                 UPDATE ai_jobs
-                SET status='failed', error_code=%s, error_message=%s, finished_at=now(), updated_at=now()
+                SET status='failed', error_code=%s, error_message=%s,
+                    finished_at=now(), updated_at=now()
                 WHERE id=%s
                 """,
                 (f"http_{e.status_code}", str(e.detail), job_id),
@@ -273,7 +269,8 @@ async def _run_and_save(
             conn.execute(
                 """
                 UPDATE ai_jobs
-                SET status='failed', error_code='internal_error', error_message=%s, finished_at=now(), updated_at=now()
+                SET status='failed', error_code='internal_error', error_message=%s,
+                    finished_at=now(), updated_at=now()
                 WHERE id=%s
                 """,
                 (str(exc)[:200], job_id),
@@ -417,7 +414,9 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
             filter_clause += " AND task_type=%s"
             params.append(task_type)
 
-        summary_query += filter_clause + " GROUP BY provider, model, task_type ORDER BY call_count DESC"
+        summary_query += (
+            filter_clause + " GROUP BY provider, model, task_type ORDER BY call_count DESC"
+        )
         records_query += filter_clause + " ORDER BY created_at DESC LIMIT %s"
         record_params = list(params) + [limit]
 

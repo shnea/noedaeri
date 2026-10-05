@@ -19,15 +19,16 @@ from fastapi.staticfiles import StaticFiles
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from .ai_indexing import cleanup_indexing_results, install_indexing_routes, process_indexing_queue
+from .ai_jobs import install_ai_job_routes
 from .auth import COOKIE, Auth, digest
 from .config import Settings
 from .db import Database
+from .embeddings import install_embedding_routes
 from .execution import execution_lock
 from .integration import PLATFORM_OWNER, Webhooks
 from .queue import Queue
 from .raya import Raya, install_raya_routes
-from .embeddings import install_embedding_routes
-from .ai_jobs import install_ai_job_routes
 from .services import SERVICES
 from .storage import Storage
 
@@ -137,11 +138,22 @@ def create_app(settings: Settings | None = None):
 
                 logging.getLogger("noedaeri").error("webhook_delivery_failed")
 
+    async def index_documents():
+        while True:
+            try:
+                await process_indexing_queue(db, getattr(app.state, "settings", settings))
+            except Exception:
+                import logging
+
+                logging.getLogger("noedaeri").error("indexing_dispatch_failed")
+            await asyncio.sleep(1)
+
     async def maintenance():
         while True:
             try:
                 await asyncio.to_thread(webhooks.collect)
                 await asyncio.to_thread(storage.cleanup, db)
+                await asyncio.to_thread(cleanup_indexing_results, db)
             except Exception:
                 # Never emit connection strings, stored payloads or credentials to logs.
                 import logging
@@ -170,10 +182,16 @@ def create_app(settings: Settings | None = None):
         task = asyncio.create_task(maintenance())
         delivery_task = asyncio.create_task(deliver())
         raya_task = asyncio.create_task(release_raya())
+        indexing_task = asyncio.create_task(index_documents())
         yield
         task.cancel()
         delivery_task.cancel()
         raya_task.cancel()
+        indexing_task.cancel()
+        try:
+            await indexing_task
+        except asyncio.CancelledError:
+            pass
         try:
             await raya_task
         except asyncio.CancelledError:
@@ -208,6 +226,7 @@ def create_app(settings: Settings | None = None):
     install_raya_routes(app, settings, auth, raya, db, principal)
     install_embedding_routes(app, settings, auth, principal)
     install_ai_job_routes(app, db, auth, settings)
+    install_indexing_routes(app, db, auth, settings)
 
     def present(job):
         data = public_job(job)

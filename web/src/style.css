@@ -873,3 +873,68 @@ main {
 .raya-image input {
   width: auto;
 }
+
+.indexing-tabs,
+.indexing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 16px;
+}
+.indexing-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 12px;
+  margin-block-end: 12px;
+}
+.indexing-fields label,
+.indexing-upload {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.indexing-upload {
+  margin-block: 16px;
+  overflow-wrap: anywhere;
+}
+.indexing-panel input,
+.indexing-panel select,
+.indexing-upload span {
+  min-width: 0;
+  max-width: 100%;
+}
+.indexing-upload input[type="file"] {
+  width: 100%;
+}
+.indexing-detail {
+  background: var(--detail);
+  padding: 20px;
+  margin-block: 24px;
+  border: 1px solid var(--line);
+}
+.indexing-detail pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.indexing-panel .table-scroll {
+  overflow-x: auto;
+}
+.indexing-panel td,
+.indexing-panel code {
+  overflow-wrap: anywhere;
+}
+.indexing-panel textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+}
+.indexing-panel .checkbox-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-block: 16px;
+}
+.indexing-panel .checkbox-field input {
+  width: auto;
+  min-height: 0;
+}

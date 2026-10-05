@@ -97,4 +97,61 @@ CREATE TABLE IF NOT EXISTS ai_usage (
 );
 CREATE INDEX IF NOT EXISTS ai_usage_project_env ON ai_usage(project, environment, created_at DESC);
 CREATE INDEX IF NOT EXISTS ai_usage_owner ON ai_usage(owner_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS ai_indexing_jobs (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ owner_id uuid NOT NULL REFERENCES users(id),
+ project text NOT NULL DEFAULT 'default',
+ environment text NOT NULL DEFAULT 'production',
+ request_id text NOT NULL,
+ collection text NOT NULL DEFAULT 'portfolio',
+ mode text NOT NULL,
+ status text NOT NULL DEFAULT 'running',
+ document_count integer NOT NULL DEFAULT 0,
+ indexed_count integer NOT NULL DEFAULT 0,
+ deleted_count integer NOT NULL DEFAULT 0,
+ total_tokens integer NOT NULL DEFAULT 0,
+ result jsonb,
+ error_code text,
+ error_message text,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ finished_at timestamptz,
+ expires_at timestamptz NOT NULL DEFAULT now() + interval '24 hours',
+ UNIQUE(owner_id, project, environment, request_id)
+);
+CREATE INDEX IF NOT EXISTS ai_indexing_jobs_owner_created ON ai_indexing_jobs(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ai_indexing_jobs_project_env ON ai_indexing_jobs(project, environment, collection, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS ai_documents (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ owner_id uuid NOT NULL REFERENCES users(id),
+ project text NOT NULL DEFAULT 'default',
+ environment text NOT NULL DEFAULT 'production',
+ collection text NOT NULL DEFAULT 'portfolio',
+ document_id text NOT NULL,
+ title text,
+ content text NOT NULL,
+ metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+ embedding jsonb NOT NULL,
+ token_count integer NOT NULL DEFAULT 0,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(owner_id, project, environment, collection, document_id)
+);
+CREATE INDEX IF NOT EXISTS ai_documents_lookup ON ai_documents(project, environment, collection);
+CREATE INDEX IF NOT EXISTS ai_documents_doc_id ON ai_documents(project, environment, collection, document_id);
+
+-- Idempotent upgrades for installations that already applied the first indexing schema.
+ALTER TABLE ai_indexing_jobs ADD COLUMN IF NOT EXISTS payload jsonb;
+ALTER TABLE ai_indexing_jobs ADD COLUMN IF NOT EXISTS request_hash text NOT NULL DEFAULT '';
+ALTER TABLE ai_indexing_jobs ADD COLUMN IF NOT EXISTS retention_seconds integer NOT NULL DEFAULT 86400;
+ALTER TABLE ai_indexing_jobs ADD COLUMN IF NOT EXISTS result_state text NOT NULL DEFAULT 'none';
+ALTER TABLE ai_indexing_jobs ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE ai_documents ADD COLUMN IF NOT EXISTS model text NOT NULL DEFAULT 'models/gemini-embedding-001';
+ALTER TABLE ai_documents ADD COLUMN IF NOT EXISTS dimensions integer NOT NULL DEFAULT 768;
+ALTER TABLE ai_documents DROP CONSTRAINT IF EXISTS ai_documents_project_environment_collection_document_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS ai_documents_owner_scope
+ ON ai_documents(owner_id,project,environment,collection,document_id);
+ALTER TABLE ai_usage DROP CONSTRAINT IF EXISTS ai_usage_project_environment_request_id_provider_model_key;
+CREATE UNIQUE INDEX IF NOT EXISTS ai_usage_owner_request
+ ON ai_usage(owner_id,project,environment,request_id,provider,model);

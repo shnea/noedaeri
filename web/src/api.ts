@@ -125,6 +125,56 @@ export const embeddingResponseSchema = z.object({
   }),
 });
 
+export const indexingJobSchema = z.object({
+  id: z.string(),
+  owner_id: z.string(),
+  result_state: z.string(),
+  reused: z.boolean().optional(),
+  request_id: z.string(),
+  project: z.string(),
+  environment: z.string(),
+  collection: z.string(),
+  mode: z.string(),
+  status: z.string(),
+  document_count: z.number(),
+  indexed_count: z.number(),
+  deleted_count: z.number(),
+  total_tokens: z.number(),
+  result: z.json().nullable().optional(),
+  error_code: z.string().nullable().optional(),
+  error_message: z.string().nullable().optional(),
+  created_at: z.string(),
+  updated_at: z.string().nullable().optional(),
+  finished_at: z.string().nullable().optional(),
+  expires_at: z.string().nullable().optional(),
+});
+
+export const collectionOverviewSchema = z.object({
+  owner_id: z.string(),
+  collection: z.string(),
+  project: z.string(),
+  environment: z.string(),
+  document_count: z.number(),
+  total_tokens: z.number(),
+  last_updated_at: z.string().nullable().optional(),
+});
+
+export const vectorSearchResultItemSchema = z.object({
+  document_id: z.string(),
+  title: z.string().nullable().optional(),
+  content: z.string(),
+  similarity: z.number(),
+  metadata: z.json().nullable().optional(),
+});
+
+export const vectorSearchResponseSchema = z.object({
+  query: z.string(),
+  collection: z.string(),
+  total_candidates: z.number(),
+  matched_count: z.number(),
+  results: z.array(vectorSearchResultItemSchema),
+});
+
 export type User = z.infer<typeof userSchema>;
 
 export type Job = z.infer<typeof jobSchema>;
@@ -144,6 +194,16 @@ export type AiUsageRecord = z.infer<typeof aiUsageRecordSchema>;
 export type AiUsageResponse = z.infer<typeof aiUsageResponseSchema>;
 
 export type EmbeddingResponse = z.infer<typeof embeddingResponseSchema>;
+
+export type IndexingJob = z.infer<typeof indexingJobSchema>;
+
+export type CollectionOverview = z.infer<typeof collectionOverviewSchema>;
+
+export type VectorSearchResultItem = z.infer<
+  typeof vectorSearchResultItemSchema
+>;
+
+export type VectorSearchResponse = z.infer<typeof vectorSearchResponseSchema>;
 
 const messages = new Map(
   Object.entries({

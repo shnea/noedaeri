@@ -1,6 +1,6 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 12 · 기준일: 2026-10-05
+문서 버전: 13 · 기준일: 2026-10-06
 
 ## 현재 연결 가능한 범위
 
@@ -19,6 +19,9 @@
 | 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
 | 공통 AI 작업 실행 | `/api/v1/ai/jobs` | 플랫폼 키 인증, 동기/비동기 n8n 연동 실행, 8대 작업·공통 RAG, `request_id` 멱등성 및 24시간 보존 구현 완료 |
 | 공통 텍스트 임베딩 | `/api/v1/ai/embeddings` | 플랫폼 키·AI 키·웹 세션 인증, 단일/배치 고성능 임베딩(768차원 등) 동기 API 구현 완료 |
+| 공통 문서 벡터 인덱싱 | `/api/v1/ai/indexing` | 플랫폼 키·웹 세션 인증, 문서 추가(upsert)·전체 교체(replace_all)·삭제(delete), 소유자별 실제 색인·비동기 접수·멱등성·결과 만료·관리 화면 구현 |
+| 공통 벡터 유사도 검색 | `/api/v1/ai/indexing/search` | 플랫폼 키·웹 세션 인증, 소유자·프로젝트·환경·컬렉션별 768차원 코사인 검색 구현 |
+| 컬렉션 통계 조회 | `/api/v1/ai/indexing/collections` | 플랫폼 키·웹 세션 인증, 컬렉션별 문서 수 및 토큰 통계 조회 구현 완료 |
 | Raya 난이도 판단 | 동기 JSON | 기존 플랫폼 키·n8n 실행 키·웹 세션 API, CPU 추론·3등급 분기 구현 |
 | n8n AI 작업 분기 연동 | 웹훅/수동 | 8개 작업·미등록 분기, 공통 RAG(동적 컬렉션 벡터 검색 및 컨텍스트 합성) → Raya → 3등급 분기 → LangChain 모델 연동 완료 |
 | 공통 벡터 데이터 인덱싱 예제 | 수동/웹훅 | 동적 컬렉션 지원 문서 분할·임베딩·Qdrant 벡터 저장소 인덱싱 파이프라인 워크플로 예제 제공 |
@@ -187,6 +190,124 @@ Raya에는 현재 사용자 요청과 필요한 텍스트 문맥을 전달하고
 - **조회 API**: `GET /api/v1/ai/usage?project=...&environment=...&task_type=...&limit=50`
 - **집계 항목**: 공급자(`provider`), 모델(`model`), 작업 종류(`task_type`)별 총 호출 수(`call_count`), 프롬프트 토큰(`total_prompt_tokens`), 완료 토큰(`total_completion_tokens`), 총 토큰(`total_tokens`).
 - **중복 방지 원칙**: `(project, environment, request_id, provider, model)` 유니크 제약 조건을 통해 동일 보고의 재전송으로 토큰이 중복 집계되거나 모델이 재호출되는 현상을 완벽히 차단한다.
+
+### 공통 문서 벡터 인덱싱 및 유사도 검색 API
+
+문서를 받아 공통 임베딩 함수(`models/gemini-embedding-001`, 768차원)로 벡터를 만들고 PostgreSQL에 저장한다. 이 인덱스는 기존 n8n Qdrant 예제와 별도다. Qdrant에 저장한 문서는 이 API에서 조회되지 않으며, 이 API로 저장한 문서도 Qdrant 검색에 자동 반영되지 않는다. n8n에서 이 인덱스를 사용할 때는 아래 검색 API를 호출하고 반환된 `results`를 작업 문맥에 전달한다. 모델 호출·Raya 난이도 분류는 기존 n8n AI 워크플로가 맡는다.
+
+#### 인증 및 범위
+
+- 플랫폼: `/api/v1/ai/indexing` 계열 + `X-Noedaeri-API-Key`.
+- n8n 실행: `/api/ai/v1/indexing` 계열 + `X-Noedaeri-Raya-Key`. n8n의 Header Auth 자격증명에 실행 키를 저장한다. n8n 관리 API 키를 요청이나 예제에 넣지 않는다.
+- 웹: `/api/ai/indexing` 계열 + 승인된 웹 세션. 변경 요청에는 동일 출처와 CSRF 토큰이 필요하다.
+- 문서 저장·검색·교체·삭제 범위는 `(owner_id, project, environment, collection)`이다. 플랫폼과 n8n 실행 키는 플랫폼 서비스 소유자에만 접근하며 웹 사용자의 문서를 조회하지 않는다. 일반 웹 사용자는 자신의 작업·컬렉션만 조회한다. 관리자는 전체 작업 이력과 컬렉션 통계를 조회하고 대기 작업을 취소할 수 있다. 신규 인덱싱 테스트는 로그인한 소유자 범위이며, 관리자 검색은 선택한 소유자 범위를 지원한다.
+- `project`, `environment`, `collection`은 각각 최대 64자다. 검색의 기본 프로젝트는 `default`, 환경은 `production`, 컬렉션은 `portfolio`이며 다른 범위를 자동 합쳐 검색하지 않는다.
+
+#### 인덱싱 접수 (`POST /api/v1/ai/indexing`)
+
+```json
+{
+  "request_id": "index-request-001",
+  "project": "sample-project",
+  "environment": "production",
+  "collection": "documents",
+  "mode": "upsert",
+  "sync": false,
+  "documents": [
+    {"id": "doc-1", "title": "설계 기록", "content": "벡터 검색 서비스를 구현한 기록", "metadata": {"category": "engineering"}}
+  ],
+  "delete_ids": []
+}
+```
+
+- `upsert`: 같은 문서 ID를 추가 또는 갱신하며 `delete_ids`의 삭제도 같은 트랜잭션에 반영한다. 문서와 삭제 ID가 겹치면 거부한다.
+- `replace_all`: 지정 범위의 기존 문서를 요청 문서로 원자적으로 교체한다. `documents: []`이면 전체 삭제한다. `delete_ids`는 받지 않는다.
+- `delete`: `documents: []`와 삭제할 `delete_ids`를 전달한다. 임베딩을 호출하지 않는다.
+- 문서는 최대 100건, 삭제 ID도 최대 100건이다. 문서 ID는 최대 256자, 제목은 최대 512자, 제목과 본문을 합친 임베딩 텍스트는 최대 16,000자다. 중복 문서 ID와 빈 본문은 거부한다. 전체 JSON 본문은 최대 1 MiB다.
+- 자동 청크 분할은 하지 않으므로 긴 문서는 호출 측에서 나누어 보낸다. 전체 교체는 요청 1회의 문서로 교체하며 여러 요청에 걸친 100건 초과 전체 교체는 아직 지원하지 않는다.
+- `sync: false`는 DB에 접수하고 HTTP 202를 반환한다. 서버 내부 디스패처가 실행하며 상태는 `pending → running → succeeded/failed`다. `sync: true`(기본)는 실행 결과를 기다리지만 같은 컬렉션이 사용 중이면 202와 대기 상태를 반환한다. 진행 상태는 목록·단건 조회로 확인한다.
+- `(owner_id, project, environment, request_id)`로 중복 실행을 막는다. 같은 내용은 기존 작업과 `reused: true`를 반환한다. 같은 ID로 다른 문서·모드·컬렉션을 보내면 HTTP 409다. `sync` 변경은 같은 요청으로 취급한다. 실패나 취소된 작업을 다시 실행하려면 새 요청 ID를 사용한다.
+- 같은 범위의 변경은 DB 잠금으로 직렬화한다. 임베딩 실패·벡터 개수나 차원 불일치·저장 실패 시 기존 인덱스를 유지한다. 프로세스 종료 후 접수 상태는 재개한다. 실행 중이던 작업은 호출 결과가 불확실하므로 `indexing_execution_interrupted` 실패로 기록하고 자동 모델 재호출은 하지 않는다.
+
+응답(완료 예시):
+
+```json
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "owner_id": "00000000-0000-4000-8000-000000000002",
+  "request_id": "index-request-001",
+  "project": "sample-project",
+  "environment": "production",
+  "collection": "documents",
+  "mode": "upsert",
+  "status": "succeeded",
+  "document_count": 1,
+  "indexed_count": 1,
+  "deleted_count": 0,
+  "total_tokens": 5,
+  "result": {"indexed_count": 1, "deleted_count": 0, "model": "models/gemini-embedding-001", "dimensions": 768, "total_tokens": 5, "usage_estimated": true},
+  "result_state": "available",
+  "error_code": null,
+  "error_message": null,
+  "reused": false,
+  "created_at": "2026-10-06T00:00:00Z",
+  "updated_at": "2026-10-06T00:00:01Z",
+  "finished_at": "2026-10-06T00:00:01Z",
+  "expires_at": "2026-10-13T00:00:01Z"
+}
+```
+
+`total_tokens`는 현재 공통 임베딩 함수의 공백 단위 추정치이며 공급자의 청구 토큰 수가 아니다. 인덱싱·검색 호출은 `/api/v1/ai/usage`에 별도 기록하며 완료 작업을 재조회해도 모델을 다시 호출하지 않는다.
+
+#### 작업 상태·결과·취소
+
+- 단건: `GET /api/v1/ai/indexing/{job_id}`.
+- 목록: `GET /api/v1/ai/indexing?project=...&environment=...&collection=...&status=...&limit=20`. `limit`은 1~100이다.
+- 취소: `POST /api/v1/ai/indexing/{job_id}/cancel`. `pending` 작업만 취소하며 이미 실행·종료된 작업은 HTTP 409다.
+- 결과 요약은 완료 시각부터 웹 요청은 24시간, 플랫폼·n8n 요청은 `PLATFORM_RESULT_TTL_SECONDS`(기본 7일) 보관한다. 이후 `result: null`, `result_state: expired`를 반환하고 자동 정리가 DB의 요약을 지운다. 정리가 실패해도 조회 시 만료 결과를 노출하지 않고 다음 정리 때 재시도한다.
+- 작업 이력과 중복 방지 정보는 결과 만료 후에도 유지한다. 실제 색인 문서는 `delete` 또는 `replace_all`까지 영속 보관한다. 웹 테스트 화면에서도 실제 인덱스에 반영하므로 결과 요약의 24시간 만료가 문서 삭제를 뜻하지 않는다. 요청 원문은 종료 후 작업 큐에서 제거한다.
+
+#### 컬렉션 통계
+
+`GET /api/v1/ai/indexing/collections?project=...&environment=...`는 소유자·프로젝트·환경·컬렉션·모델·차원별 `document_count`, 저장 문서의 추정 `total_tokens`, `last_updated_at`을 반환한다. 전체 호출 사용량과는 구분한다.
+
+#### 검색 (`POST /api/v1/ai/indexing/search`)
+
+```json
+{"project":"sample-project","environment":"production","collection":"documents","query":"벡터 검색 설계","limit":5,"min_similarity":0.0}
+```
+
+```json
+{
+  "query": "벡터 검색 설계",
+  "owner_id": "00000000-0000-4000-8000-000000000002",
+  "project": "sample-project",
+  "environment": "production",
+  "collection": "documents",
+  "total_candidates": 1,
+  "matched_count": 1,
+  "results": [{"document_id":"doc-1","title":"설계 기록","content":"벡터 검색 서비스를 구현한 기록","metadata":{"category":"engineering"},"similarity":0.88}]
+}
+```
+
+질의는 최대 10,000자, `limit`은 1~50, `min_similarity`는 -1~1이다. 저장할 때와 같은 모델·차원으로 질의를 임베딩한 뒤 코사인 유사도로 정렬한다. 현재는 PostgreSQL JSON 벡터를 최대 10,000문서까지 읽는 정확 검색이며 대규모 ANN 엔진이 아니다. 범위가 비어 있으면 모델 호출 없이 빈 결과를 반환하고 10,000문서 초과 범위는 HTTP 422로 거부한다.
+
+웹 관리자는 선택적인 `owner_id`로 플랫폼·다른 사용자의 색인을 검색할 수 있다. 일반 사용자·플랫폼·n8n 키는 다른 소유자 지정 시 HTTP 403이다. 관리 화면의 검색 대상 컬렉션에서 소유자와 범위를 선택할 수 있다.
+
+#### 실패 처리 및 관리 화면
+
+| 상황 | 응답·상태 |
+|---|---|
+| 키 누락·불일치 / 세션 누락 | HTTP 401 |
+| 승인 대기·철회 / CSRF 오류 | HTTP 403 |
+| 요청 ID 충돌 / 취소 불가 | HTTP 409 |
+| 본문 한도 초과 | HTTP 413 |
+| 필드·문서 검증 오류 / 검색 범위 한도 초과 | HTTP 422 |
+| 조회할 작업 없음 또는 다른 소유자 | HTTP 404 |
+| 인덱싱 모델·저장 실패 | HTTP 200의 `status: failed`, `error_code` 확인 |
+| 검색 공급자 미설정·불통 / 잘못된 공급자 응답 | HTTP 503 / 502 |
+
+웹의 **임베딩 · RAG** 메뉴에서 컬렉션 통계, 단일 문서·일괄 JSON 업로드, 추가·교체·삭제 실행, 요청 ID 재사용, 최근 작업 상태·상세·오류·결과 JSON 다운로드·대기 취소·만료를 확인한다. **연동 지침** 메뉴와 `/integrations/openapi.json`은 위 플랫폼 계약을 함께 제공한다. 일괄 업로드 파일은 브라우저에서 읽고 문서 JSON으로 전송하며 서버에 원본 파일을 남기지 않는다.
 
 ## Raya 난이도 판단 API
 
