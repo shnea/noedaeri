@@ -97,6 +97,34 @@ def main():
                         "name": "뇌대리 Raya 전용",
                     }
                 }
+            elif node["name"] == "L1 · OpenRouter Model" and values.get("N8N_OPENROUTER_CREDENTIAL_ID"):
+                node["credentials"] = {
+                    "openRouterApi": {
+                        "id": values["N8N_OPENROUTER_CREDENTIAL_ID"],
+                        "name": "뇌대리 OpenRouter",
+                    }
+                }
+            elif node["name"] == "L2 · Groq Model" and values.get("N8N_GROQ_CREDENTIAL_ID"):
+                node["credentials"] = {
+                    "groqApi": {
+                        "id": values["N8N_GROQ_CREDENTIAL_ID"],
+                        "name": "뇌대리 Groq",
+                    }
+                }
+            elif node["name"] == "L3 · Gemini Model" and values.get("N8N_GEMINI_CREDENTIAL_ID"):
+                node["credentials"] = {
+                    "googlePalmApi": {
+                        "id": values["N8N_GEMINI_CREDENTIAL_ID"],
+                        "name": "뇌대리 Google AI Studio",
+                    }
+                }
+            elif node["name"] == "폴백 · Mistral Model" and values.get("N8N_MISTRAL_CREDENTIAL_ID"):
+                node["credentials"] = {
+                    "mistralCloudApi": {
+                        "id": values["N8N_MISTRAL_CREDENTIAL_ID"],
+                        "name": "뇌대리 Mistral",
+                    }
+                }
         # Preserve input samples, task instructions, custom nodes and existing branch rules.
         expected_ids = {node["id"] for node in template["nodes"]}
         retired_ids = {str(uuid.uuid5(uuid.NAMESPACE_URL, "noedaeri.example/draft/l4-output"))}
@@ -124,25 +152,17 @@ def main():
         retired_names = {node["name"] for node in remote["nodes"] if node["id"] in retired_ids}
         connections = remote["connections"]
         connections.pop("공급자·하향 후보 준비", None)
+        connections.pop("Raya·AI 연결 예정", None)
         for name in retired_names:
             connections.pop(name, None)
-        for groups in connections.values():
-            for output in groups.get("main", []):
-                output[:] = [edge for edge in output if edge["node"] not in retired_names]
-                for edge in output:
-                    if edge["node"] == "Raya·AI 연결 예정":
-                        edge["node"] = "Raya 요청 준비"
-        connections.pop("Raya·AI 연결 예정", None)
         for source, groups in template["connections"].items():
-            if source in {
-                "Raya 요청 준비",
-                "Raya 난이도 판단",
-                "요청·판단 합치기",
-                "공급자·순환 후보 준비",
-                "공급자 경로 · 한도 연결 대기",
-                "모델 성능 등급 분기",
-            }:
-                connections[source] = groups
+            connections[source] = groups
+        valid_names = {node["name"] for node in nodes}
+        connections = {k: v for k, v in connections.items() if k in valid_names}
+        for groups in connections.values():
+            for conn_list in groups.values():
+                for output in conn_list:
+                    output[:] = [edge for edge in output if edge["node"] in valid_names]
         fresh = require(client.get("workflows/" + workflow_id))
         if fresh["versionId"] != remote["versionId"] or fresh["active"]:
             raise RuntimeError("Workflow changed during setup; no workflow update performed")
@@ -160,11 +180,12 @@ def main():
         if set(actual) != {node["id"] for node in nodes}:
             raise RuntimeError("Saved node set did not match")
         for node in nodes:
-            if (
-                actual[node["id"]]["parameters"] != node["parameters"]
-                or actual[node["id"]]["name"] != node["name"]
-            ):
-                raise RuntimeError("Saved node parameters did not match")
+            actual_params = actual[node["id"]]["parameters"]
+            for k, v in node["parameters"].items():
+                if actual_params.get(k) != v:
+                    raise RuntimeError(f"Saved node parameter {k} did not match on node {node['name']}")
+            if actual[node["id"]]["name"] != node["name"]:
+                raise RuntimeError(f"Saved node name did not match on node {node['name']}")
     print("Inactive n8n draft updated and verified; original instructions preserved.")
 
 

@@ -19,7 +19,7 @@
 | 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
 | TTS·임베딩·n8n 워크플로 실행 | 미정 | 미구현 |
 | Raya 난이도 판단 | 동기 JSON | 기존 플랫폼 키·n8n 실행 키·웹 세션 API, CPU 추론·3등급 분기 구현 |
-| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업·미등록 분기 → Raya → 3등급 분기. 실제 AI 답변은 미연결 |
+| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업·미등록 분기 → Raya → 3등급 분기 → n8n LangChain 모델 연결 완료 |
 | 공통 AI 사용량 관리 | 뇌대리 usage | 연결 설계만 반영. 수집·저장·조회 API 미구현 |
 
 ## n8n AI 작업 분기 초안
@@ -30,7 +30,7 @@
 
 현재 플랫폼에서 실제 호출할 수 있는 AI 기능은 아래 `POST /api/v1/ai/raya/route` 난이도 판단이다. n8n 작업 접수·실행·결과 수령·usage 조회 API는 아직 미구현이며 수동 초안을 외부 작업 실행 API로 안내하지 않는다. 향후 플랫폼 접수에는 요청 ID·작업 종류·플랫폼이 확인한 서비스/사용자 식별을 연결하고 뇌대리에서 라우팅·캐시·사용량·실행 상태를 관리한다. n8n에는 검증된 작업만 실행용 인증으로 전달하며 n8n 관리 API 키를 외부 요청 인증에 재사용하지 않는다.
 
-[가져오기용 워크플로 JSON](https://github.com/shnea/noedaeri/blob/main/examples/n8n_ai_routing_sample.json)을 제공한다. 수동 실행 → 가상 요청 → 작업 종류 분기 → 빈 지침 → 실제 Raya 추론 → 성능 등급 분기 순서다. 각 분기의 `instruction`을 비워 두었다. 실제 검색·화면 생성·AI 답변·학습 데이터 수집·파인튜닝은 연결하지 않았다.
+[가져오기용 워크플로 JSON](https://github.com/shnea/noedaeri/blob/main/examples/n8n_ai_routing_sample.json)을 제공한다. 수동 실행 → 가상 요청 → 작업 종류 분기 → 빈 지침 → 실제 Raya 추론 → 성능 등급 분기 순서다. 각 분기의 `instruction`을 비워 두었다. 각 모델 분기에는 n8n의 LangChain Agent와 전용 Chat Model 노드가 연결되어 직접 모델을 호출한다.
 
 | `task_type` | 작업 |
 |---|---|
@@ -45,9 +45,9 @@
 
 입력은 `{ "task_type": "blog.tags", "prompt": "샘플 글" }` 형태다. 기본 샘플 노드는 8개 작업과 미등록 작업을 각각 하나씩 생성한다. 결과는 입력을 유지하고 `task_name`, 빈 `instruction`, `status: "awaiting_instructions"`를 추가한다. 등록되지 않은 작업은 별도 분기에서 `status: "unsupported_task"`로 표시하며 일반 질답으로 자동 처리하지 않는다. 노드 자체의 오류는 n8n 실행 실패로 남고 재시도 설정은 없다.
 
-Raya 판단은 `routing` 아래 원래 요청과 합쳐 제공한다. HTTP 노드는 한 번에 한 요청씩 호출하고 실패 시 실행을 중단한다. 등급 Switch는 `routing.model_tier`의 `L1`, `L2`, `L3`를 지정된 공급자 연결 대기 분기로 보낸다. 순환 후보를 준비하지만 실제 한도 조회·대체 호출은 아직 없다. 예상하지 못한 등급은 별도 확인 분기로 보낸다.
+Raya 판단은 `routing` 아래 원래 요청과 합쳐 제공한다. HTTP 노드는 한 번에 한 요청씩 호출하고 실패 시 실행을 중단한다. 등급 Switch는 `routing.model_tier`의 `L1`, `L2`, `L3`를 지정된 공급자 연결 분기로 보낸다. 순환 후보를 준비하고 n8n 내부의 LangChain 에이전트 노드로 모델을 호출한다. 예상하지 못한 등급은 별도 확인 분기로 보낸다.
 
-새 작업은 Switch에 `task_type` 규칙을 추가하고 지침 노드를 복제한 뒤 출력에 연결한다. 작업 종류는 모델 성능 등급과 별개다. 공급자 순서는 L1 OpenRouter `openrouter/free`, L2 GroqCloud 무료, L3 Gemini 무료다. Groq·Gemini의 실제 모델 ID와 공급자 호출은 미연결이다. 공급자의 무료 한도·잔여량·지원 기능 판단은 후속 범위다.
+새 작업은 Switch에 `task_type` 규칙을 추가하고 지침 노드를 복제한 뒤 출력에 연결한다. 작업 종류는 모델 성능 등급과 별개다. 공급자 순서는 L1 OpenRouter `openrouter/free`, L2 GroqCloud `openai/gpt-oss-120b`, L3 Gemini `models/gemini-3.8-flash`, 폴백 Mistral `ministral-8b-latest`다.
 
 샘플은 n8n 편집 권한으로 수동 실행하며 자동 실행용 웹훅은 없다. 가져오기용 JSON에는 비밀키·실제 서버 주소·Credential ID가 없다. n8n HTTP 노드에 실제 뇌대리 주소와 아래 계약의 Header Auth를 선택한다. 실행 데이터 보관·삭제는 해당 n8n 인스턴스의 정책을 따르며 뇌대리 웹 테스트의 24시간 보관을 적용하지 않는다. 실제 AI 답변의 호출 한도·결과 수령·학습 데이터 보존 계약은 후속 범위다.
 
@@ -55,10 +55,10 @@ Raya 판단은 `routing` 아래 원래 요청과 합쳐 제공한다. HTTP 노�
 
 | 단계 | 지정 공급자 | 초안 상태 |
 |---|---|---|
-| L1 | OpenRouter `openrouter/free` | 연결 대기 |
-| L2 | GroqCloud 무료 티어 | 실제 모델 ID·연결 대기 |
-| L3 | Gemini 무료 티어 | 실제 모델 ID·연결 대기 |
-| 폴백 | Mistral 직접 API · 무료 모드 | 실제 모델 ID·인증·한도·연결 대기 |
+| L1 | OpenRouter `openrouter/free` | n8n LangChain 모델 연결 |
+| L2 | GroqCloud `openai/gpt-oss-120b` | n8n LangChain 모델 연결 |
+| L3 | Google AI Studio `models/gemini-3.8-flash` | n8n LangChain 모델 연결 |
+| 폴백 | Mistral 직접 API `ministral-8b-latest` | n8n LangChain 모델 연결 |
 
 Raya가 L1~L3 중 하나를 직접 판단하며, 초안의 `provider_plan`은 선택 단계부터 **L3→L2→L1→Mistral 폴백→L3** 순환 순서로 후보를 준비한다. 시작별 후보는 다음과 같다.
 
