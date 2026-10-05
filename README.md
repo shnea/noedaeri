@@ -57,3 +57,5 @@ npm run build --prefix web
 DB 검사는 로컬 소켓만 사용하는 일회성 PostgreSQL을 띄운 뒤 삭제한다. 실제 FFmpeg 영상 생성·썸네일 출력, 워커 HTTP 실행, 멱등성·권한·점유·취소·만료 처리를 검사한다. UI 검사는 Playwright 설치 환경에서 `node scripts/ui-check.cjs`로 실행하며 개발 서버가 필요하다. UI 검사의 여러 서비스는 명시된 가상 데이터이며 실제 구현 서비스 목록이 아니다.
 
 `web/tools/oxlint/anti-slop`은 프로젝트에 보관한 원본 플러그인이다. 원본 출처와 의도적인 변경 사항은 해당 디렉터리의 UPSTREAM.md에 기록한다.
+
+플랫폼 이관 준비 상태와 다음 개발 순서는 [기능 대응표](docs/PLATFORM_COMPATIBILITY.md)를 기준으로 관리한다.
