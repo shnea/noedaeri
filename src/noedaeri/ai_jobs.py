@@ -20,8 +20,8 @@ class AiJobCreate(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
     task_type: str = Field(min_length=1, max_length=64)
     prompt: str = Field(min_length=1, max_length=200000)
-    project: str = Field(default="default", min_length=1, max_length=64)
-    environment: str = Field(default="production", min_length=1, max_length=64)
+    project: str = Field(default="default", min_length=1, max_length=128)
+    environment: str = Field(default="production", min_length=1, max_length=128)
     input: dict[str, Any] = Field(default_factory=dict)
     sync: bool = True
 
@@ -32,8 +32,8 @@ class AiUsageReport(BaseModel):
     task_type: str = Field(min_length=1, max_length=64)
     provider: str = Field(min_length=1, max_length=64)
     model: str = Field(min_length=1, max_length=128)
-    project: str = Field(default="default", min_length=1, max_length=64)
-    environment: str = Field(default="production", min_length=1, max_length=64)
+    project: str = Field(default="default", min_length=1, max_length=128)
+    environment: str = Field(default="production", min_length=1, max_length=128)
     prompt_tokens: int = Field(default=0, ge=0)
     completion_tokens: int = Field(default=0, ge=0)
     total_tokens: int = Field(default=0, ge=0)

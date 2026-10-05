@@ -41,9 +41,9 @@ class DocumentInput(BaseModel):
 class IndexingJobCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: str = Field(min_length=1, max_length=128)
-    project: str = Field(default="default", min_length=1, max_length=64)
-    environment: str = Field(default="production", min_length=1, max_length=64)
-    collection: str = Field(default="portfolio", min_length=1, max_length=64)
+    project: str = Field(default="default", min_length=1, max_length=128)
+    environment: str = Field(default="production", min_length=1, max_length=128)
+    collection: str = Field(default="portfolio", min_length=1, max_length=256)
     mode: Literal["upsert", "replace_all", "delete"] = "upsert"
     documents: list[DocumentInput] = Field(default_factory=list, max_length=MAX_BATCH_SIZE)
     delete_ids: list[str] = Field(default_factory=list, max_length=100)
@@ -75,9 +75,9 @@ class VectorSearchQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     owner_id: UUID | None = Field(default=None, description="관리자만 다른 소유자의 색인 조회 가능")
     query: str = Field(min_length=1, max_length=10000)
-    collection: str = Field(default="portfolio", min_length=1, max_length=64)
-    project: str = Field(default="default", min_length=1, max_length=64)
-    environment: str = Field(default="production", min_length=1, max_length=64)
+    collection: str = Field(default="portfolio", min_length=1, max_length=256)
+    project: str = Field(default="default", min_length=1, max_length=128)
+    environment: str = Field(default="production", min_length=1, max_length=128)
     limit: int = Field(default=5, ge=1, le=50)
     min_similarity: float = Field(default=0.0, ge=-1.0, le=1.0)
 
@@ -420,14 +420,22 @@ def install_indexing_routes(app: FastAPI, db: Database, auth: Auth, settings: Se
         owner = query.owner_id or caller
         if owner != caller and not admin:
             raise HTTPException(403, "index_owner_access_denied")
+        clean_project = query.project.replace("-", "")
+        clean_env = query.environment.replace("-", "")
+        prefix = f"platform_{clean_project}_{clean_env}_"
+        candidates = [query.collection]
+        if query.collection.startswith(prefix):
+            candidates.append(query.collection[len(prefix):])
+        elif not query.collection.startswith("platform_"):
+            candidates.append(f"{prefix}{query.collection}")
         with db.connect() as conn:
             docs = conn.execute(
                 """SELECT document_id,title,content,metadata,embedding FROM ai_documents
-                WHERE owner_id=%s AND collection=%s AND project=%s AND environment=%s
+                WHERE owner_id=%s AND collection = ANY(%s) AND project=%s AND environment=%s
                 AND model=%s AND dimensions=%s ORDER BY document_id LIMIT %s""",
                 (
                     owner,
-                    query.collection,
+                    candidates,
                     query.project,
                     query.environment,
                     DEFAULT_MODEL,
