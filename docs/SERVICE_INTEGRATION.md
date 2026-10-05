@@ -1,6 +1,6 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 6 · 기준일: 2026-10-05
+문서 버전: 7 · 기준일: 2026-10-05
 
 ## 현재 연결 가능한 범위
 
@@ -18,6 +18,28 @@
 | 플랫폼 서버 인증·요청 | `/api/v1/` | 전용 키 인증 구현, 수신 주소 설정 후 접수 |
 | 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
 | TTS·임베딩·n8n 워크플로 실행 | 미정 | 미구현 |
+| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업·미등록 분기 초안. 실제 AI 실행 API는 없음 |
+
+## n8n AI 작업 분기 초안
+
+[가져오기용 워크플로 JSON](https://github.com/shnea/noedaeri/blob/main/examples/n8n_ai_routing_sample.json)을 제공한다. 수동 실행 → 가상 요청 → 작업 종류 분기 → 빈 지침 → Raya·AI 연결 예정 순서다. 각 분기의 `instruction`을 비워 두었으며, 실제 검색·화면 생성·AI 호출·Raya 추론·학습·관리자 데이터 관리 기능은 연결하지 않았다.
+
+| `task_type` | 작업 |
+|---|---|
+| `blog.tags` | 블로그 태그 |
+| `blog.summary` | 블로그 요약 |
+| `portfolio.search` | 포트폴리오 검색 |
+| `ui.render` | UI 빌더 화면 생성 |
+| `comment.generate` | 댓글 생성 |
+| `document.analyze` | 문서 분석 |
+| `code.analyze` | 코드 분석 |
+| `chat.general` | 일반 질답 |
+
+입력은 `{ "task_type": "blog.tags", "prompt": "샘플 글" }` 형태다. 기본 샘플 노드는 8개 작업과 미등록 작업을 각각 하나씩 생성한다. 결과는 입력을 유지하고 `task_name`, 빈 `instruction`, `status: "awaiting_instructions"`를 추가한다. 등록되지 않은 작업은 별도 분기에서 `status: "unsupported_task"`로 표시하며 일반 질답으로 자동 처리하지 않는다. 노드 자체의 오류는 n8n 실행 실패로 남고 재시도 설정은 없다.
+
+새 작업은 Switch에 `task_type` 규칙을 추가하고 지침 노드를 복제한 뒤 출력에 연결한다. 작업 종류는 모델 성능 등급과 별개다. 향후 Raya와 공급자 선택을 연결할 후보는 Gemini, GroqCloud, OpenRouter `openrouter/free`, GitHub Copilot Pro이며 현재 공급자를 고정하거나 호출하지 않는다.
+
+외부 요청 URL·요청 인증·AI 호출 한도·실제 결과 수령 계약은 아직 없다. 샘플은 n8n 편집 권한으로 수동 실행하며 비밀키·자격증명을 포함하지 않는다. 향후 공급자 키는 n8n Credentials로 연결한다. 실행 데이터 보관·삭제는 해당 n8n 인스턴스의 정책을 따르며 뇌대리 웹 테스트의 24시간 보관을 적용하지 않는다. 관리자 검토용 데이터 수집·보존·삭제 계약은 후속 구현 범위다.
 
 ## 플랫폼 기능 대응 현황
 

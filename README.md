@@ -55,6 +55,10 @@ API는 빌드된 `web/dist`를 함께 제공한다. 초기 관리자 설정이 �
 .venv/bin/python scripts/configure_secret.py --config config/n8n.enc.env --key NOEDAERI_API_KEY
 ```
 
+## n8n 분기 초안
+
+n8n의 AI 작업 분기 초안은 [워크플로 JSON](examples/n8n_ai_routing_sample.json)을 가져와 확인할 수 있다. 수동 실행으로 8개 작업과 미등록 작업을 분기하며, 각 작업의 `instruction`은 추후 지침을 입력하도록 비워 두었다. Raya·AI 호출·학습·관리자 데이터 연동은 아직 연결하지 않았다. [입력과 확장 방법](docs/SERVICE_INTEGRATION.md#n8n-ai-작업-분기-초안)을 참고한다.
+
 ## 검사
 
 ```sh

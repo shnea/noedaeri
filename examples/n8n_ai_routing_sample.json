@@ -1,0 +1,785 @@
+{
+  "name": "뇌대리 · AI 작업 분기 초안",
+  "nodes": [
+    {
+      "id": "9d7a6f24-ea84-583a-853c-a1e7d3500417",
+      "name": "수동 실행",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        560
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "c63e6352-3911-542c-8e61-0bdac95d9bc0",
+      "name": "샘플 요청 8종 + 미등록",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        560
+      ],
+      "parameters": {
+        "jsCode": "// 분기 확인용 가상 요청입니다. 실제 입력을 연결할 때 이 노드를 교체하세요.\nconst samples = [\n  {\n    \"task_type\": \"blog.tags\",\n    \"prompt\": \"샘플 블로그 글에 태그를 붙여 주세요.\"\n  },\n  {\n    \"task_type\": \"blog.summary\",\n    \"prompt\": \"샘플 블로그 글을 요약해 주세요.\"\n  },\n  {\n    \"task_type\": \"portfolio.search\",\n    \"prompt\": \"샘플 포트폴리오에서 관련 내용을 찾아 주세요.\"\n  },\n  {\n    \"task_type\": \"ui.render\",\n    \"prompt\": \"샘플 UI 빌더에서 화면을 그려 주세요.\"\n  },\n  {\n    \"task_type\": \"comment.generate\",\n    \"prompt\": \"샘플 글의 댓글을 만들어 주세요.\"\n  },\n  {\n    \"task_type\": \"document.analyze\",\n    \"prompt\": \"샘플 문서를 분석해 주세요.\"\n  },\n  {\n    \"task_type\": \"code.analyze\",\n    \"prompt\": \"샘플 코드를 분석해 주세요.\"\n  },\n  {\n    \"task_type\": \"chat.general\",\n    \"prompt\": \"샘플 일반 질문입니다.\"\n  },\n  {\n    \"task_type\": \"future.task\",\n    \"prompt\": \"추가 작업 분기를 위한 샘플입니다.\"\n  }\n];\nreturn samples.map(json => ({ json }));"
+      }
+    },
+    {
+      "id": "0ff46382-80a5-5739-92b2-86535eb28075",
+      "name": "작업 종류 분기",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        -200,
+        560
+      ],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "715cd90e-2ca3-55e7-ac11-448d6e68bcf8",
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "blog.tags",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "블로그 태그"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "cf3a427c-5041-5bcd-9bd6-9fac9297786b",
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "blog.summary",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "블로그 요약"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "286cfe74-e4e0-57b9-80b6-57a2484c024b",
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "portfolio.search",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "포트폴리오 검색"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "f44b9b5d-1643-5ec7-b050-880b7bde3b4a",
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "ui.render",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "UI 빌더 화면 생성"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "67a5bf86-78c4-58cf-87eb-eb953199be85",
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "comment.generate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "댓글 생성"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "1fa6772d-f259-50ab-a004-0f47e20b3b05",
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "document.analyze",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "문서 분석"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "4c88050d-bd4b-5ea3-8430-a83958127dc6",
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "code.analyze",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "코드 분석"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "64cf9786-ea0b-534a-9e0d-d39f828c08e8",
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "chat.general",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "일반 질답"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      }
+    },
+    {
+      "id": "b2dc7760-e44a-55a9-9d25-cfb42617b881",
+      "name": "블로그 태그 · 지침 대기",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
+              "name": "task_name",
+              "value": "블로그 태그",
+              "type": "string"
+            },
+            {
+              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
+              "name": "instruction",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
+              "name": "status",
+              "value": "awaiting_instructions",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "a884c905-b52b-55a1-94f0-db4a1cbc9154",
+      "name": "블로그 요약 · 지침 대기",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        160
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
+              "name": "task_name",
+              "value": "블로그 요약",
+              "type": "string"
+            },
+            {
+              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
+              "name": "instruction",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
+              "name": "status",
+              "value": "awaiting_instructions",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "c474da10-5623-572e-ba32-373b5d36b71c",
+      "name": "포트폴리오 검색 · 지침 대기",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        320
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
+              "name": "task_name",
+              "value": "포트폴리오 검색",
+              "type": "string"
+            },
+            {
+              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
+              "name": "instruction",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
+              "name": "status",
+              "value": "awaiting_instructions",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "aef5ccf5-af49-53fa-b071-4083c5cda257",
+      "name": "UI 빌더 화면 생성 · 지침 대기",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        480
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
+              "name": "task_name",
+              "value": "UI 빌더 화면 생성",
+              "type": "string"
+            },
+            {
+              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
+              "name": "instruction",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
+              "name": "status",
+              "value": "awaiting_instructions",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "efd558c3-3b67-5af7-9d35-a74c43314973",
+      "name": "댓글 생성 · 지침 대기",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        640
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
+              "name": "task_name",
+              "value": "댓글 생성",
+              "type": "string"
+            },
+            {
+              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
+              "name": "instruction",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
+              "name": "status",
+              "value": "awaiting_instructions",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "1ce57615-d967-558c-b942-b851a0302c66",
+      "name": "문서 분석 · 지침 대기",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        800
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
+              "name": "task_name",
+              "value": "문서 분석",
+              "type": "string"
+            },
+            {
+              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
+              "name": "instruction",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
+              "name": "status",
+              "value": "awaiting_instructions",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "cc211931-1071-52d4-9c48-2b7d9755ed49",
+      "name": "코드 분석 · 지침 대기",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        960
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
+              "name": "task_name",
+              "value": "코드 분석",
+              "type": "string"
+            },
+            {
+              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
+              "name": "instruction",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
+              "name": "status",
+              "value": "awaiting_instructions",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "11c53e08-5a88-5a78-9dca-8d170ca30f39",
+      "name": "일반 질답 · 지침 대기",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        1120
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
+              "name": "task_name",
+              "value": "일반 질답",
+              "type": "string"
+            },
+            {
+              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
+              "name": "instruction",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
+              "name": "status",
+              "value": "awaiting_instructions",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "da0d52b7-0b38-5f49-84b0-d88578ef51a3",
+      "name": "미등록 작업 · 분기 추가 대기",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        160,
+        1280
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
+              "name": "task_name",
+              "value": "미등록 작업",
+              "type": "string"
+            },
+            {
+              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
+              "name": "instruction",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
+              "name": "status",
+              "value": "unsupported_task",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "notes": "새 작업은 Switch에 규칙을 추가하고 지침 노드를 복제해 연결합니다. 미등록 요청을 일반 질답으로 자동 처리하지 않습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "e42fbf98-2b7b-54d2-a14c-8a1ffae5b008",
+      "name": "Raya·AI 연결 예정",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        740,
+        560
+      ],
+      "parameters": {},
+      "notes": "통과만 하는 빈 단계입니다. Raya 추론, 모델 등급 선택, AI 호출, 학습 데이터 수집은 아직 연결하지 않았습니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "11af4990-0429-5203-b617-2314b4669d10",
+      "name": "사용 방법",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        -440
+      ],
+      "parameters": {
+        "content": "## AI 작업 분기 초안\n수동 실행하면 가상 요청 8종과 미등록 요청 1종이 각 분기로 나뉩니다.\n각 **지침 대기** 노드의 `instruction`은 비워 두었습니다. 작업별 지침을 받은 뒤 채웁니다.\n\n### 다음 연결\n실제 요청 입력 → 작업 종류 분기 → 작업 지침 → Raya 난이도 판단 → 공급자 선택 → 실제 AI 호출\n공급자 후보: Gemini / GroqCloud / OpenRouter `openrouter/free` / GitHub Copilot Pro.\n**현재 Raya·AI 호출·검색·화면 생성·학습·관리자 연동은 없습니다.**\n\n### 새 작업 추가\nSwitch에서 `task_type` 규칙 추가 → 지침 노드 복제 → 출력 연결.\n미등록 작업은 마지막 분기로 보냅니다.\n키는 워크플로 본문에 넣지 않고 n8n Credentials로 연결합니다.",
+        "height": 400,
+        "width": 680
+      }
+    }
+  ],
+  "connections": {
+    "수동 실행": {
+      "main": [
+        [
+          {
+            "node": "샘플 요청 8종 + 미등록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "샘플 요청 8종 + 미등록": {
+      "main": [
+        [
+          {
+            "node": "작업 종류 분기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "블로그 태그 · 지침 대기": {
+      "main": [
+        [
+          {
+            "node": "Raya·AI 연결 예정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "블로그 요약 · 지침 대기": {
+      "main": [
+        [
+          {
+            "node": "Raya·AI 연결 예정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "포트폴리오 검색 · 지침 대기": {
+      "main": [
+        [
+          {
+            "node": "Raya·AI 연결 예정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "UI 빌더 화면 생성 · 지침 대기": {
+      "main": [
+        [
+          {
+            "node": "Raya·AI 연결 예정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "댓글 생성 · 지침 대기": {
+      "main": [
+        [
+          {
+            "node": "Raya·AI 연결 예정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "문서 분석 · 지침 대기": {
+      "main": [
+        [
+          {
+            "node": "Raya·AI 연결 예정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "코드 분석 · 지침 대기": {
+      "main": [
+        [
+          {
+            "node": "Raya·AI 연결 예정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "일반 질답 · 지침 대기": {
+      "main": [
+        [
+          {
+            "node": "Raya·AI 연결 예정",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "작업 종류 분기": {
+      "main": [
+        [
+          {
+            "node": "블로그 태그 · 지침 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "블로그 요약 · 지침 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "포트폴리오 검색 · 지침 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "UI 빌더 화면 생성 · 지침 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "댓글 생성 · 지침 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "문서 분석 · 지침 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "코드 분석 · 지침 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "일반 질답 · 지침 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "미등록 작업 · 분기 추가 대기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
