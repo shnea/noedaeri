@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { z } from "zod";
+import { VideoResult } from "./VideoResult";
 import {
   jobSchema,
   memberSchema,
@@ -47,6 +48,20 @@ function Status({ value }: { value: string }) {
 }
 
 function Details({ job, cancel }: { job: Job; cancel: () => void }) {
+  const videoPackage = z
+    .object({
+      type: z.literal("video_package"),
+      variants: z.array(z.object({ label: z.string(), playlist: z.string() })),
+    })
+    .safeParse(job.result);
+
+  const stageLabel = job.stage.startsWith("encoding_")
+    ? `${job.stage.slice(9)} 영상 변환 중`
+    : new Map([
+        ["thumbnail", "썸네일 생성 중"],
+        ["packaging", "결과 묶음 생성 중"],
+      ]).get(job.stage);
+
   const available =
     job.result_state === "available" &&
     job.expires_at !== null &&
@@ -120,7 +135,8 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
             ? "취소 요청을 전달했습니다. 워커가 종료를 확인할 때까지 기다려 주세요."
             : job.error_code
               ? errorLabel(job.error_code)
-              : statuses.get(job.status)}
+              : (job.status === "running" && stageLabel) ||
+                statuses.get(job.status)}
         </p>
         <div className="detail-actions">
           <span className="muted">
@@ -147,6 +163,12 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
         <h3>결과</h3>
         {available ? (
           <>
+            {videoPackage.success && (
+              <VideoResult
+                jobId={job.id}
+                variants={videoPackage.data.variants}
+              />
+            )}
             {imageResult && (
               <a className="result-preview" href={`/api/jobs/${job.id}/result`}>
                 <img
@@ -156,6 +178,7 @@ function Details({ job, cancel }: { job: Job; cancel: () => void }) {
               </a>
             )}
             {!artifact.success &&
+              !videoPackage.success &&
               job.result !== null &&
               job.result !== undefined && (
                 <pre className="json-result">

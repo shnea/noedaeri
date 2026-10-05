@@ -1,19 +1,25 @@
+import io
 import os
 import socket
 import subprocess
 import sys
 import threading
 import time
+import zipfile
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import UUID
 
+import pytest
 import uvicorn
 from conftest import login
 from test_jobs import new_job
 
 
-def test_worker_process_calls_api_and_finishes(app):
+@pytest.mark.parametrize("kind", ["video.thumbnail", "video.package"])
+def test_worker_process_calls_api_and_finishes(app, kind):
     client, _ = login(app)
-    job_id = new_job(client).json()["id"]
+    job_id = new_job(client, kind=kind).json()["id"]
     source = app.state.storage.root / "sample.mp4"
     subprocess.run(
         [
@@ -23,7 +29,7 @@ def test_worker_process_calls_api_and_finishes(app):
             "-f",
             "lavfi",
             "-i",
-            "color=c=green:s=320x180:d=1",
+            "color=c=green:s=1280x720:d=7",
             "-c:v",
             "libx264",
             "-y",
@@ -67,15 +73,47 @@ def test_worker_process_calls_api_and_finishes(app):
         stderr=subprocess.DEVNULL,
     )
     try:
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 40
         while time.monotonic() < deadline:
             job = client.get("/api/jobs").json()[0]
             if job["status"] in {"succeeded", "failed"}:
                 break
             time.sleep(0.1)
         assert job["status"] == "succeeded"
-        assert job["result"]["type"] == "artifact"
-        assert client.get(f"/api/jobs/{job_id}/result").content.startswith(b"\xff\xd8")
+        if kind == "video.thumbnail":
+            assert job["result"]["type"] == "artifact"
+            assert client.get(f"/api/jobs/{job_id}/result").content.startswith(b"\xff\xd8")
+        else:
+            result = job["result"]
+            assert result["type"] == "video_package"
+            assert [item["label"] for item in result["variants"]] == ["480p", "720p"]
+            base = f"/api/jobs/{job_id}/files/"
+            master = client.get(base + "master.m3u8")
+            assert master.status_code == 200
+            assert "1080p" not in master.text
+            assert "RESOLUTION=1280x720" in master.text
+            for variant in result["variants"]:
+                playlist = client.get(base + variant["playlist"])
+                assert "#EXT-X-ENDLIST" in playlist.text
+                segments = [
+                    line for line in playlist.text.splitlines() if line and not line.startswith("#")
+                ]
+                assert len(segments) == 2
+                for name in segments:
+                    assert "/" not in name
+                    assert client.get(base + name).status_code == 200
+            archive = zipfile.ZipFile(io.BytesIO(client.get(f"/api/jobs/{job_id}/result").content))
+            assert "master.m3u8" in archive.namelist()
+            assert client.get(base + "unlisted.ts").status_code == 404
+            login(app)
+            assert client.get(base + "master.m3u8").status_code == 404
+            with app.state.db.connect() as conn:
+                conn.execute(
+                    "UPDATE jobs SET expires_at=%s WHERE id=%s",
+                    (datetime.now(UTC) - timedelta(seconds=1), UUID(job_id)),
+                )
+            app.state.storage.cleanup(app.state.db)
+            assert not (settings.storage_root / "results" / job_id).exists()
     finally:
         process.terminate()
         process.wait(timeout=10)

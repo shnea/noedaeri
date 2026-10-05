@@ -31,3 +31,36 @@ def test_playlist_cannot_open_remote_input(tmp_path):
     )
     with pytest.raises(MediaError):
         thumbnail(source, tmp_path / "out.jpg", 0, 3, lambda: True)
+
+
+def test_package_preserves_display_aspect_and_cancellation(tmp_path):
+    import subprocess
+
+    import pytest
+
+    from noedaeri.media import JobCancelled, video_package
+
+    source = tmp_path / "source.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=s=720x576:d=1",
+            "-vf",
+            "setsar=16/15",
+            "-c:v",
+            "libx264",
+            "-y",
+            str(source),
+        ],
+        check=True,
+    )
+    result = video_package(source, tmp_path / "result", 0, 30, lambda: True, lambda _: None)
+    variant = result["variants"][0]
+    assert (variant["width"], variant["height"]) == (640, 480)
+    with pytest.raises(JobCancelled):
+        video_package(source, tmp_path / "cancelled", 0, 30, lambda: False, lambda _: None)

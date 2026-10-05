@@ -41,6 +41,7 @@ class Claim(BaseModel):
 
 class Lease(BaseModel):
     token: UUID
+    stage: str | None = Field(default=None, max_length=40, pattern=r"^[a-z0-9_]+$")
 
 
 class Finish(Lease):
@@ -53,6 +54,7 @@ class Finish(Lease):
             "unsupported_media",
             "result_missing",
             "worker_failed",
+            "storage_capacity_exceeded",
         ]
         | None
     ) = None
@@ -315,7 +317,8 @@ def create_app(settings: Settings | None = None):
         return {"status": "cancellation_requested"}
 
     @app.get("/api/jobs/{job_id}/result")
-    def result(request: Request, job_id: UUID):
+    @app.get("/api/jobs/{job_id}/files/{filename}")
+    def result(request: Request, job_id: UUID, filename: str | None = None):
         user = auth.user(request)
         with db.connect() as conn:
             job = conn.execute(
@@ -330,6 +333,28 @@ def create_app(settings: Settings | None = None):
         ):
             raise HTTPException(410, "result_unavailable")
         service = SERVICES[job["kind"]]
+        if job["kind"] == "video.package":
+            manifest = job["result"] or {}
+            name = filename or "video.zip"
+            if name not in manifest.get("files", []):
+                raise HTTPException(404, "result_missing")
+            try:
+                path = storage.path("results", job_id, name)
+            except ValueError:
+                raise HTTPException(404, "result_missing") from None
+            if not path.is_file():
+                raise HTTPException(410, "result_missing")
+            media_type = {
+                ".m3u8": "application/vnd.apple.mpegurl",
+                ".ts": "video/mp2t",
+                ".jpg": "image/jpeg",
+                ".zip": "application/zip",
+            }.get(path.suffix)
+            return FileResponse(
+                path, media_type=media_type, filename=name if name.endswith(".zip") else None
+            )
+        if filename is not None:
+            raise HTTPException(404, "result_missing")
         if not service.result_filename:
             return job["result"]
         path = storage.path("results", job_id, service.result_filename)
@@ -381,7 +406,7 @@ def create_app(settings: Settings | None = None):
     @app.post("/internal/jobs/{job_id}/heartbeat")
     def heartbeat(request: Request, job_id: UUID, data: Lease):
         worker(request)
-        job = queue.heartbeat(job_id, data.token)
+        job = queue.heartbeat(job_id, data.token, data.stage)
         if not job:
             raise HTTPException(409, "lease_lost")
         return {"cancel_requested": job["cancel_requested"]}
@@ -398,6 +423,21 @@ def create_app(settings: Settings | None = None):
             if not job:
                 raise HTTPException(404, "job_not_found")
             service = SERVICES[job["kind"]]
+            if job["kind"] == "video.package":
+                if not isinstance(result_data, dict) or result_data.get("type") != "video_package":
+                    raise HTTPException(409, "result_missing")
+                files = result_data.get("files", [])
+                if not isinstance(files, list) or not {
+                    "master.m3u8",
+                    "thumbnail.jpg",
+                    "video.zip",
+                }.issubset(files):
+                    raise HTTPException(409, "result_missing")
+                try:
+                    if not all(storage.path("results", job_id, name).is_file() for name in files):
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    raise HTTPException(409, "result_missing") from None
             if service.result_filename:
                 path = storage.path("results", job_id, service.result_filename)
                 if not path.is_file():

@@ -23,7 +23,16 @@ class Storage:
             raise ValueError("Unsafe storage target")
         return path
 
-    def available(self, reserved: int):
+    def available(self, reserved: int | None):
+        # Admission reserves inputs; an executing job must count actual inputs
+        # and intermediate files as well as its growing output.
+        if reserved is None:
+            reserved = sum(
+                p.stat().st_size
+                for area in ("uploads", "jobs")
+                for p in (self.root / area).rglob("*")
+                if p.is_file() and not p.is_symlink()
+            )
         return (
             reserved
             + sum(

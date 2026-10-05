@@ -29,6 +29,13 @@ class Service:
 
 
 SERVICES = {
+    "video.package": Service(
+        "video.package",
+        "ffmpeg",
+        "영상 통합 처리 · 썸네일 + 해상도별 스트리밍",
+        "upload",
+        ThumbnailOptions,
+    ),
     "video.thumbnail": Service(
         "video.thumbnail",
         "ffmpeg",

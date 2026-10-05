@@ -29,13 +29,14 @@ class Queue:
                 (uuid4(), worker_id, self.lease_seconds, kinds),
             ).fetchone()
 
-    def heartbeat(self, job_id: UUID, token: UUID):
+    def heartbeat(self, job_id: UUID, token: UUID, stage: str | None = None):
         with self.db.connect() as conn:
             job = conn.execute(
-                "UPDATE jobs SET lease_until=now()+make_interval(secs=>%s), updated_at=now() "
+                "UPDATE jobs SET lease_until=now()+make_interval(secs=>%s), updated_at=now(), "
+                "stage=COALESCE(%s,stage) "
                 "WHERE id=%s AND lease_token=%s AND status='running' AND lease_until>now() "
                 "RETURNING cancel_requested, worker_id",
-                (self.lease_seconds, job_id, token),
+                (self.lease_seconds, stage, job_id, token),
             ).fetchone()
             if job:
                 conn.execute("UPDATE workers SET last_seen=now() WHERE id=%s", (job["worker_id"],))
@@ -55,12 +56,14 @@ class Queue:
             if job["cancel_requested"]:
                 status, code = "cancelled", None
             conn.execute(
-                "UPDATE jobs SET stage='finished', status=%s, error_code=%s, "
+                "UPDATE jobs SET stage=CASE WHEN %s='succeeded' THEN 'finished' ELSE stage END, "
+                "status=%s, error_code=%s, "
                 "finished_at=now(), updated_at=now(), "
                 "expires_at=CASE WHEN %s='succeeded' THEN now()+make_interval(secs=>%s) END, "
                 "result_state=CASE WHEN %s='succeeded' THEN 'available' ELSE 'none' END, "
                 "lease_until=NULL, result=%s WHERE id=%s",
                 (
+                    status,
                     status,
                     code,
                     status,

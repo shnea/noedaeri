@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 import httpx
 
 from .config import Settings
-from .media import JobCancelled, MediaError, thumbnail
+from .media import JobCancelled, MediaError, thumbnail, video_package
 from .storage import Storage
 
 
@@ -32,7 +32,10 @@ def run():
             try:
                 response = client.post(
                     "/internal/claim",
-                    json={"worker_id": str(worker_id), "kinds": ["video.thumbnail"]},
+                    json={
+                        "worker_id": str(worker_id),
+                        "kinds": ["video.thumbnail", "video.package"],
+                    },
                 )
                 response.raise_for_status()
                 job = response.json()
@@ -58,16 +61,38 @@ def run():
                         last_beat = time.monotonic()
                     return valid and not cancelled
 
-                status, code = "succeeded", None
+                def stage(value, active_lease=lease):
+                    nonlocal last_beat
+                    active_lease["stage"] = value
+                    last_beat = 0
+                    if not alive():
+                        raise JobCancelled()
+
+                def capacity_alive():
+                    if not alive():
+                        return False
+                    if not storage.available(None):
+                        raise MediaError("storage_capacity_exceeded")
+                    return True
+
+                status, code, result = "succeeded", None, None
                 try:
                     job_id = UUID(job["id"])
-                    thumbnail(
-                        storage.path("uploads", job_id, "input"),
-                        storage.path("results", job_id, "thumbnail.jpg"),
-                        job["options"]["seconds"],
-                        settings.job_timeout,
-                        alive,
-                    )
+                    source = storage.path("uploads", job_id, "input")
+                    output = storage.path("results", job_id, "thumbnail.jpg")
+                    if job["kind"] == "video.package":
+                        result = video_package(
+                            source,
+                            output.parent,
+                            job["options"]["seconds"],
+                            settings.video_timeout,
+                            capacity_alive,
+                            stage,
+                        )
+                    else:
+                        thumbnail(
+                            source, output, job["options"]["seconds"], settings.job_timeout, alive
+                        )
                 except JobCancelled:
                     status = "cancelled"
                 except MediaError as error:
@@ -78,7 +103,7 @@ def run():
                 if valid:
                     client.post(
                         f"/internal/jobs/{job['id']}/finish",
-                        json={**lease, "status": status, "error_code": code},
+                        json={**lease, "status": status, "error_code": code, "result": result},
                     ).raise_for_status()
             except httpx.HTTPError:
                 logging.getLogger("noedaeri").error("worker_api_unavailable")

@@ -19,6 +19,7 @@ class Settings:
     storage_limit: int = 5 * 1024 * 1024 * 1024
     free_floor: int = 2 * 1024 * 1024 * 1024
     job_timeout: int = 120
+    video_timeout: int = 1800
     lease_seconds: int = 30
     result_ttl: int = 86400
 

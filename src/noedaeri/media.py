@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import signal
 import subprocess
@@ -127,3 +128,169 @@ def thumbnail(source: Path, output: Path, seconds: float, timeout: int, alive: C
     )
     if not output.is_file() or output.stat().st_size < 4:
         raise MediaError("result_missing")
+
+
+def video_package(source, folder, seconds, timeout, alive, stage):
+    """Produce flat, relative HLS paths suitable for authenticated delivery or export."""
+    try:
+        folder.mkdir(parents=True, exist_ok=False, mode=0o700)
+    except FileExistsError:
+        raise MediaError("worker_failed") from None
+    deadline = time.monotonic() + timeout
+
+    def remaining():
+        budget = deadline - time.monotonic()
+        if budget <= 0:
+            raise MediaError("processing_timeout")
+        return budget
+
+    stage("thumbnail")
+    thumbnail(source, folder / "thumbnail.jpg", seconds, remaining(), alive)
+    raw = run_process(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-protocol_whitelist",
+            "file",
+            "-format_whitelist",
+            "mov,matroska,webm",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height,sample_aspect_ratio:stream_side_data=rotation",
+            "-of",
+            "json",
+            str(source),
+        ],
+        min(15, remaining()),
+        alive,
+        capture=True,
+    )
+    stream = json.loads(raw)["streams"][0]
+    width, height = int(stream["width"]), int(stream["height"])
+    sar = stream.get("sample_aspect_ratio", "1:1")
+    if sar not in {"N/A", "0:1"}:
+        numerator, denominator = (int(value) for value in sar.split(":"))
+        if (
+            denominator <= 0
+            or not math.isfinite(numerator / denominator)
+            or not 0.1 <= numerator / denominator <= 10
+        ):
+            raise MediaError("unsupported_media")
+        width = round(width * numerator / denominator)
+    # Portrait videos use their short edge for the quality label too.
+    rotation = next(
+        (int(item["rotation"]) for item in stream.get("side_data_list", []) if "rotation" in item),
+        0,
+    )
+    if abs(rotation) % 180 == 90:
+        width, height = height, width
+    short = min(width, height)
+    levels = [n for n in (480, 720, 1080) if n <= short] or [short - short % 2]
+    master = ["#EXTM3U", "#EXT-X-VERSION:3"]
+    variants = []
+    for level in levels:
+        if level < 2:
+            raise MediaError("unsupported_media")
+        scale = min(level / short, 4096 / width, 4096 / height)
+        w, h = int(width * scale) // 2 * 2, int(height * scale) // 2 * 2
+        name = f"{level}p.m3u8"
+        bitrate = 1200 if level <= 480 else 2800 if level <= 720 else 5000
+        stage(f"encoding_{level}p")
+        run_process(
+            [
+                "ffmpeg",
+                "-nostdin",
+                "-y",
+                "-v",
+                "error",
+                "-protocol_whitelist",
+                "file",
+                "-format_whitelist",
+                "mov,matroska,webm",
+                "-threads",
+                "1",
+                "-i",
+                str(source),
+                "-map",
+                "0:v:0",
+                "-map",
+                "0:a:0?",
+                "-sn",
+                "-dn",
+                "-vf",
+                f"scale={w}:{h},setsar=1",
+                "-r",
+                "30",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-threads",
+                "2",
+                "-b:v",
+                f"{bitrate}k",
+                "-maxrate",
+                f"{bitrate}k",
+                "-bufsize",
+                f"{bitrate * 2}k",
+                "-g",
+                "180",
+                "-keyint_min",
+                "180",
+                "-sc_threshold",
+                "0",
+                "-force_key_frames",
+                "expr:gte(t,n_forced*6)",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-ac",
+                "2",
+                "-f",
+                "hls",
+                "-hls_time",
+                "6",
+                "-hls_list_size",
+                "0",
+                "-hls_playlist_type",
+                "vod",
+                "-hls_flags",
+                "independent_segments",
+                "-hls_segment_filename",
+                str(folder / f"{level}p-%05d.ts"),
+                str(folder / name),
+            ],
+            remaining(),
+            alive,
+        )
+        master.extend(
+            [f"#EXT-X-STREAM-INF:BANDWIDTH={(bitrate + 128) * 1100},RESOLUTION={w}x{h}", name]
+        )
+        variants.append({"label": f"{level}p", "width": w, "height": h, "playlist": name})
+    (folder / "master.m3u8").write_text("\n".join(master) + "\n")
+    stage("packaging")
+    import zipfile
+
+    files = sorted(p.name for p in folder.iterdir() if p.is_file())
+    with zipfile.ZipFile(folder / "video.zip", "w", compression=zipfile.ZIP_STORED) as archive:
+        for name in files:
+            # Chunking allows cancellation and space checks during the export copy.
+            with (folder / name).open("rb") as source_file, archive.open(name, "w") as target:
+                while chunk := source_file.read(1024 * 1024):
+                    if not alive():
+                        raise JobCancelled()
+                    remaining()
+                    target.write(chunk)
+    return {
+        "type": "video_package",
+        "master": "master.m3u8",
+        "thumbnail": "thumbnail.jpg",
+        "download": "video.zip",
+        "variants": variants,
+        "files": [*files, "video.zip"],
+    }

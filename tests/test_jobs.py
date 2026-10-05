@@ -8,11 +8,11 @@ from conftest import login
 from noedaeri.media import thumbnail
 
 
-def new_job(client, key=None, title="테스트 작업"):
+def new_job(client, key=None, title="테스트 작업", kind="video.thumbnail"):
     return client.post(
         "/api/jobs",
         json={
-            "kind": "video.thumbnail",
+            "kind": kind,
             "title": title,
             "idempotency_key": str(key or uuid4()),
             "input": {"type": "upload"},
@@ -204,3 +204,15 @@ def test_non_file_service_uses_same_queue(app, monkeypatch):
         {"type": "json", "value": {"text": "hello"}},
     )
     assert client.get(f"/api/jobs/{claimed['id']}/result").json()["value"]["text"] == "hello"
+
+
+def test_execution_capacity_includes_input_files(app):
+    from dataclasses import replace
+
+    from noedaeri.storage import Storage
+
+    storage = Storage(replace(app.state.settings, storage_limit=10, upload_limit=0))
+    source = storage.path("uploads", uuid4(), "input")
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"12345678901")
+    assert not storage.available(None)
