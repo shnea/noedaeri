@@ -132,7 +132,7 @@ def main():
                         "name": "뇌대리 Google AI Studio",
                     }
                 }
-            elif node["name"] == "포트폴리오 벡터 검색" and values.get("N8N_QDRANT_CREDENTIAL_ID"):
+            elif node["name"] in {"포트폴리오 벡터 검색", "공통 벡터 검색"} and values.get("N8N_QDRANT_CREDENTIAL_ID"):
                 node["credentials"] = {
                     "qdrantApi": {
                         "id": values["N8N_QDRANT_CREDENTIAL_ID"],
@@ -168,6 +168,8 @@ def main():
         connections.pop("공급자·하향 후보 준비", None)
         connections.pop("Raya·AI 연결 예정", None)
         connections.pop("포트폴리오 검색 · 지침 대기", None)
+        connections.pop("포트폴리오 벡터 검색", None)
+        connections.pop("포트폴리오 컨텍스트 합성", None)
         for name in retired_names:
             connections.pop(name, None)
         for source, groups in template["connections"].items():

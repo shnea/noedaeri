@@ -18,10 +18,9 @@
 | 플랫폼 서버 인증·요청 | `/api/v1/` | 전용 키 인증 구현, 수신 주소 설정 후 접수 |
 | 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
 | 공통 텍스트 임베딩 | `/api/v1/ai/embeddings` | 플랫폼 키·AI 키·웹 세션 인증, 단일/배치 고성능 임베딩(768차원 등) 동기 API 구현 완료 |
-| TTS·고자원 모델 관리 | 미정 | 고자원 관리 워커 미구현 (경량 임베딩은 자체 API 및 n8n 연동) |
 | Raya 난이도 판단 | 동기 JSON | 기존 플랫폼 키·n8n 실행 키·웹 세션 API, CPU 추론·3등급 분기 구현 |
-| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업·미등록 분기, 포트폴리오 RAG(공통 임베딩·벡터 검색) → Raya → 3등급 분기 → LangChain 모델 연결 완료 |
-| 포트폴리오 데이터 인덱싱 예제 | 수동/웹훅 | 포트폴리오 문서 분할·임베딩·Qdrant 벡터 저장소 인덱싱 파이프라인 워크플로 예제 제공 |
+| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업·미등록 분기, 공통 RAG(동적 컬렉션 벡터 검색 및 컨텍스트 합성) → Raya → 3등급 분기 → LangChain 모델 연결 완료 |
+| 공통 벡터 데이터 인덱싱 예제 | 수동/웹훅 | 동적 컬렉션 지원 문서 분할·임베딩·Qdrant 벡터 저장소 인덱싱 파이프라인 워크플로 예제 제공 |
 | 공통 AI 사용량 관리 | 뇌대리 usage | 연결 설계만 반영. 수집·저장·조회 API 미구현 |
 
 ## n8n AI 작업 분기 초안
@@ -96,34 +95,35 @@ Mistral은 Raya의 추가 등급이 아니라 L1 다음에 확인하는 별도�
 | `blog.summary` | 동일한 점유·캐시·저장 흐름. 결과의 `summary`는 비어 있지 않은 문자열이며 최대 500자다. |
 | `comment.generate` | 원문의 target·thread·memory·말투 문맥과 작업 지침을 유지한다. 기존 출력의 `comment` 계약과 추가 필드·길이 검증 범위는 연결 전에 확정한다. 현재 JSON 객체 검사만으로 완전한 댓글 검증이 된다고 간주하지 않는다. |
 | `ui.render` | `messages`·이미지 참조 → 도구를 사용하는 AI Agent → `{reply,imageFileId}` 응답. MCP의 실제 컴포넌트·템플릿·디자인 문맥, 읽기 전용 권한, revision 충돌 검사, 사용자 검토 후 적용할 변경 제안을 유지한다. |
-| `portfolio.search` | **포트폴리오 RAG 연동**: 사용자 질의 수신 → Google Gemini 임베딩(`models/text-embedding-004`) + Qdrant 벡터 검색(`portfolio` 컬렉션) → 검색된 문맥 결합 및 지침(`instruction`) 합성 → Raya 난이도 평가(L1/L2/L3) → n8n 모델 호출 → 결과 반환. |
+| `portfolio.search` 등 RAG | **공통 RAG 연동**: 사용자 질의 수신 → Google Gemini 임베딩(`models/gemini-embedding-001`) + 공통 Qdrant 벡터 검색(동적 컬렉션: `portfolio`, `document` 등) → 작업별 문맥 결합 및 지침(`instruction`) 합성 → Raya 난이도 평가(L1/L2/L3) → n8n 모델 호출 → 결과 반환. |
 | 나머지 3종 | 문서·코드·일반 질답 지침과 결과 계약은 후속으로 제공한다. 기존 기능의 지침을 자동 복제하지 않는다. |
 
 블로그 작업은 캐시 적중 시 Raya와 실제 모델을 호출하지 않는다. 실패 기록과 기존 오류 응답도 유지한다. `hash`는 기존 중복 처리용 값이며 여러 서비스의 공통 요청 식별자로 바로 대체하지 않는다. UI 빌더에서는 현재 Agent·MCP 흐름을 기준으로 연결하고 사용되지 않는 별도 HTTP 노드를 추가 호출 경로로 오인하지 않는다.
 
 Raya에는 현재 사용자 요청과 필요한 텍스트 문맥을 전달하고, 실제 AI에는 원래 대화·이미지·전체 지침을 유지한다. Raya는 이미지 내용을 분석하지 않는다. 입력 잘림과 이미지·도구·구조화 출력 요구를 별도로 확인해야 한다. 성능 등급만으로 공급자를 확정하지 않고 필요한 기능과 한도를 만족하는 실제 모델을 선택한다. 원문과 외부 도구 결과는 참고 데이터로 취급하며 신뢰된 시스템 지침과 분리한다. 인증 토큰·콜백 키는 모델 입력에 넣지 않는다.
 
-### 포트폴리오 RAG 및 데이터 인덱싱 연동
+### 공통 RAG 및 벡터 데이터 인덱싱 연동 (전 서비스 통합)
 
-포트폴리오 서비스(`shnea/portfolio`)의 AI 질의응답 기능은 기존의 독립적인 `ai-agent-api` 직접 연동을 대체하여 **포트폴리오 (웹) → 플랫폼 → 뇌대리 → n8n**의 공통 아키텍처 경로를 따른다.
+포트폴리오 서비스(`shnea/portfolio`)의 AI 질의응답을 비롯한 모든 서비스의 지식 검색(RAG) 기능은 특정 서비스 전용 하드코딩이 아닌, **외부 서비스 (웹) → 플랫폼 → 뇌대리 → n8n**의 공통 아키텍처 경로와 단일 통합 노드를 사용한다.
 
-#### 1. 포트폴리오 RAG 아키텍처 4대 구성요소
-1. **임베딩 (Embedding)**:
-   - 모델: Google Gemini `models/text-embedding-004` (768차원).
-   - n8n 네이티브 노드 `@n8n/n8n-nodes-langchain.embeddingsGoogleGemini`와 `뇌대리 Google AI Studio` 자격증명(`googlePalmApi`)을 사용하여 뇌대리 호스트의 GPU/RAM 자원을 소모하지 않고 무료 티어로 빠르고 정확하게 임베딩을 생성한다.
-2. **벡터 저장소 (Vector Store)**:
-   - 대상: Qdrant 벡터 데이터베이스 (컬렉션: `portfolio`, 코사인 유사도).
-   - n8n 네이티브 노드 `@n8n/n8n-nodes-langchain.vectorStoreQdrant`와 `qdrantApi` 자격증명을 연결한다.
-   - 포트폴리오의 프로필, 프로젝트, 경력, 기술 스택 문서 청크가 저장된다.
-3. **RAG 검색 워크플로 (`portfolio.search`)**:
-   - `작업 종류 분기`에서 `task_type === 'portfolio.search'`로 분기.
-   - `포트폴리오 벡터 검색` 노드가 질의(`$json.prompt`)를 임베딩하여 Qdrant에서 상위 관련 문맥을 검색.
-   - `포트폴리오 컨텍스트 합성` 노드가 검색된 청크들을 포맷팅하여 `instruction`과 `retrieved_context`를 조립.
-   - 합성된 문맥과 요청이 `Raya 요청 준비` → `Raya 난이도 판단` (L1/L2/L3) → 최적의 LangChain Agent로 전달되어 허위 정보를 방지(Grounding)한 정확한 답변을 생성.
-4. **포트폴리오 데이터 인덱싱 파이프라인**:
-   - 독립 워크플로 [n8n_portfolio_indexing_sample.json](https://github.com/shnea/noedaeri/blob/main/examples/n8n_portfolio_indexing_sample.json) 제공.
-   - 트리거: 수동 실행(`manualTrigger`) 및 웹훅(`POST /webhook/portfolio-index`).
-   - 파이프라인: 포트폴리오 원본 데이터 수신 → `RecursiveCharacterTextSplitter`(500자/50자 중복) 분할 → Gemini `text-embedding-004` 임베딩 → Qdrant `portfolio` 컬렉션에 `insert` 모드로 업서트 → 인덱싱 결과 반환.
+#### 1. 공통 RAG 아키텍처 4대 구성요소
+1. **공통 임베딩 (Embedding)**:
+   - **뇌대리 공통 API**: `POST /api/v1/ai/embeddings` (플랫폼 키), `POST /api/ai/v1/embeddings` (AI 키), `POST /api/ai/embeddings` (웹 세션).
+   - 모델: Google Gemini `models/gemini-embedding-001` (기본 768차원, 최대 3072차원). 단일 및 배치(최대 100건) 고속 동기 생성 지원.
+   - n8n 워크플로 내부에서도 동일한 `models/gemini-embedding-001` 및 `뇌대리 Google AI Studio` 자격증명(`googlePalmApi`)을 사용하여 임베딩 일관성을 보장한다.
+2. **공통 벡터 저장소 (Vector Store)**:
+   - 대상: Qdrant 벡터 데이터베이스 (코사인 유사도).
+   - n8n 네이티브 노드 `@n8n/n8n-nodes-langchain.vectorStoreQdrant`와 `뇌대리 Qdrant`(`qdrantApi`) 자격증명을 연결한다.
+   - 컬렉션 지정: `qdrantCollection: "={{ $json.collection || $json.task_type.split('.')[0] }}"` 수식을 통해 `portfolio.search`는 `portfolio` 컬렉션, `document.analyze`는 `document` 컬렉션, `blog.summary`는 `blog` 컬렉션 등 요청에 따라 동적으로 해당 컬렉션을 자동 조회한다.
+3. **단일 공통 RAG 검색 워크플로**:
+   - `작업 종류 분기`에서 RAG가 필요한 모든 작업(`portfolio.search`, `document.analyze` 등)이 단일 `공통 벡터 검색` 노드로 라우팅된다.
+   - `공통 벡터 검색` 노드가 질의(`$json.prompt`)를 임베딩하여 대상 Qdrant 컬렉션에서 상위 관련 문맥을 검색한다.
+   - `공통 컨텍스트 및 지침 합성` 노드가 작업 종류(`task_type`)에 맞는 템플릿(포트폴리오 안내, 문서 분석, 블로그 요약, 코드 리뷰 등)을 적용하여 신뢰할 수 있는 `instruction`과 `retrieved_context`를 조립한다.
+   - 합성된 문맥과 요청이 `Raya 요청 준비` → `Raya 난이도 판단` (L1/L2/L3) → 최적의 LangChain Agent로 전달되어 정확하고 접지(Grounding)된 답변을 생성한다.
+4. **공통 벡터 데이터 인덱싱 파이프라인**:
+   - 범용 인덱싱 워크플로 [n8n_vector_indexing_sample.json](https://github.com/shnea/noedaeri/blob/main/examples/n8n_vector_indexing_sample.json) 제공. (포트폴리오 전용 샘플 [n8n_portfolio_indexing_sample.json](https://github.com/shnea/noedaeri/blob/main/examples/n8n_portfolio_indexing_sample.json) 호환)
+   - 트리거: 수동 실행(`manualTrigger`) 및 웹훅(`POST /webhook/vector-index`).
+   - 파이프라인: 임의 컬렉션의 문서 목록 수신 → `RecursiveCharacterTextSplitter`(500자/50자 중복) 분할 → Gemini `gemini-embedding-001` 임베딩 → 동적 Qdrant 컬렉션(`$json.collection`)에 `insert` 모드로 업서트 → 인덱싱 완료 상태 및 청크 수 반환.
 
 ### 뇌대리 usage로 통합할 범위
 

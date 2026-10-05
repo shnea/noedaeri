@@ -307,7 +307,7 @@
     },
     {
       "id": "c474da10-5623-572e-ba32-373b5d36b71c",
-      "name": "포트폴리오 벡터 검색",
+      "name": "공통 벡터 검색",
       "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
       "typeVersion": 1.1,
       "position": [
@@ -316,7 +316,7 @@
       ],
       "parameters": {
         "mode": "retrieve",
-        "qdrantCollection": "portfolio",
+        "qdrantCollection": "={{ $json.collection || $json.task_type.split('.')[0] }}",
         "options": {}
       },
       "credentials": {
@@ -325,7 +325,7 @@
           "name": "뇌대리 Qdrant"
         }
       },
-      "notes": "질의와 관련된 포트폴리오 문맥을 벡터 검색합니다.",
+      "notes": "요청의 collection 또는 task_type(portfolio, document, blog 등)에 맞춰 동적으로 Qdrant 컬렉션을 벡터 검색합니다.",
       "notesInFlow": true
     },
     {
@@ -338,7 +338,7 @@
         440
       ],
       "parameters": {
-        "modelName": "models/text-embedding-004"
+        "modelName": "models/gemini-embedding-001"
       },
       "credentials": {
         "googlePalmApi": {
@@ -349,7 +349,7 @@
     },
     {
       "id": "5e1b2c3d-4f5a-6b7c-8d9e-0f1a2b3c4d5e",
-      "name": "포트폴리오 컨텍스트 합성",
+      "name": "공통 컨텍스트 및 지침 합성",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -357,9 +357,9 @@
         320
       ],
       "parameters": {
-        "jsCode": "const items = $input.all();\nconst originalPrompt = $('작업 종류 분기').first().json.prompt || $json.prompt || '';\nconst contexts = items.map((item, idx) => {\n  const text = item.json.document?.pageContent || item.json.pageContent || item.json.text || (typeof item.json === 'string' ? item.json : JSON.stringify(item.json));\n  const metadata = item.json.document?.metadata || item.json.metadata || {};\n  const title = metadata.title ? `[${metadata.title}] ` : '';\n  return `${idx + 1}. ${title}${text}`;\n}).filter(Boolean);\n\nconst contextText = contexts.length > 0 \n  ? contexts.join('\\n\\n')\n  : '검색된 포트폴리오 정보가 없습니다.';\n\nconst instruction = [\n  '당신은 포트폴리오 안내 AI 어시스턴트입니다.',\n  '아래 [검색된 포트폴리오 정보]를 바탕으로 사용자의 질문에 친절하고 정확하게 답변하세요.',\n  '포트폴리오 정보에 없는 내용은 추측하지 말고, 명시된 사실만 근거로 답변하세요.',\n  '',\n  '[검색된 포트폴리오 정보]',\n  contextText\n].join('\\n');\n\nreturn [{\n  json: {\n    task_type: 'portfolio.search',\n    prompt: originalPrompt,\n    task_name: '포트폴리오 검색',\n    instruction: instruction,\n    retrieved_context: contextText,\n    retrieved_count: contexts.length,\n    status: 'ready'\n  }\n}];"
+        "jsCode": "const items = $input.all();\nconst inputItem = $('작업 종류 분기').first()?.json || $json || {};\nconst originalPrompt = inputItem.prompt || '';\nconst taskType = inputItem.task_type || 'search.general';\nconst taskName = inputItem.task_name || taskType;\n\nconst contexts = items.map((item, idx) => {\n  const text = item.json.document?.pageContent || item.json.pageContent || item.json.text || (typeof item.json === 'string' ? item.json : JSON.stringify(item.json));\n  const metadata = item.json.document?.metadata || item.json.metadata || {};\n  const title = metadata.title ? `[${metadata.title}] ` : '';\n  return `${idx + 1}. ${title}${text}`;\n}).filter(Boolean);\n\nconst contextText = contexts.length > 0 \n  ? contexts.join('\\n\\n')\n  : '검색된 관련 정보가 없습니다.';\n\nconst templates = {\n  'portfolio.search': '당신은 포트폴리오 안내 AI 어시스턴트입니다. 아래 검색된 포트폴리오 정보를 바탕으로 친절하고 정확하게 답변하세요.',\n  'document.analyze': '당신은 문서 분석 및 지식 검색 전문가입니다. 아래 검색된 문서 문맥을 바탕으로 핵심 사실에 근거하여 명확하게 답변하세요.',\n  'blog.summary': '당신은 블로그 글 요약 및 분석 도우미입니다. 검색된 글 문맥을 참고하여 명확하게 요약하세요.',\n  'blog.tags': '당신은 블로그 태그 생성 전문가입니다. 검색된 글 문맥을 참고하여 적절한 태그를 생성하세요.',\n  'code.analyze': '당신은 코드 분석 및 리뷰 전문가입니다. 검색된 코드 베이스 문맥을 바탕으로 정확히 분석하세요.'\n};\n\nconst roleInstruction = templates[taskType] || `당신은 ${taskName} 전문 AI 어시스턴트입니다. 아래 검색된 참조 문맥을 바탕으로 정확하게 답변하세요.`;\n\nconst instruction = [\n  roleInstruction,\n  '참조 문맥에 없는 내용은 추측하지 말고, 명시된 사실만 근거로 답변하세요.',\n  '',\n  '[참조 검색 문맥]',\n  contextText\n].join('\\n');\n\nreturn [{\n  json: {\n    ...inputItem,\n    task_type: taskType,\n    prompt: originalPrompt,\n    task_name: taskName,\n    instruction: instruction,\n    retrieved_context: contextText,\n    retrieved_count: contexts.length,\n    status: 'ready'\n  }\n}];"
       },
-      "notes": "검색된 문맥을 바탕으로 지침(instruction)과 context를 조립합니다.",
+      "notes": "검색된 문맥을 바탕으로 작업 종류별 지침(instruction)과 context를 조립합니다.",
       "notesInFlow": true
     },
     {
@@ -1138,25 +1138,25 @@
       "ai_embedding": [
         [
           {
-            "node": "포트폴리오 벡터 검색",
+            "node": "공통 벡터 검색",
             "type": "ai_embedding",
             "index": 0
           }
         ]
       ]
     },
-    "포트폴리오 벡터 검색": {
+    "공통 벡터 검색": {
       "main": [
         [
           {
-            "node": "포트폴리오 컨텍스트 합성",
+            "node": "공통 컨텍스트 및 지침 합성",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "포트폴리오 컨텍스트 합성": {
+    "공통 컨텍스트 및 지침 합성": {
       "main": [
         [
           {
@@ -1240,7 +1240,7 @@
         ],
         [
           {
-            "node": "포트폴리오 벡터 검색",
+            "node": "공통 벡터 검색",
             "type": "main",
             "index": 0
           }
@@ -1261,7 +1261,7 @@
         ],
         [
           {
-            "node": "문서 분석 · 지침 대기",
+            "node": "공통 벡터 검색",
             "type": "main",
             "index": 0
           }

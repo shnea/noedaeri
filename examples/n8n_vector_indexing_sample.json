@@ -1,5 +1,5 @@
 {
-  "name": "뇌대리 · 포트폴리오 데이터 인덱싱",
+  "name": "뇌대리 · 공통 벡터 데이터 인덱싱",
   "nodes": [
     {
       "id": "7f8b9c0d-1e2f-3a4b-5c6d-7e8f9a0b1c2d",
@@ -23,13 +23,13 @@
       ],
       "parameters": {
         "httpMethod": "POST",
-        "path": "portfolio-index",
+        "path": "vector-index",
         "options": {}
       }
     },
     {
       "id": "3a4b5c6d-7e8f-9a0b-1c2d-3e4f5a6b7c8d",
-      "name": "포트폴리오 데이터 준비",
+      "name": "문서 데이터 정규화",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -37,9 +37,9 @@
         100
       ],
       "parameters": {
-        "jsCode": "// 전달받은 문서 배열이 있으면 사용하고, 없으면 기본 포트폴리오 데이터를 준비합니다.\nconst body = $input.first()?.json?.body ?? $input.first()?.json ?? {};\nconst docs = Array.isArray(body.documents) ? body.documents : [\n  {\n    title: '프로필 및 아키텍처 철학',\n    category: 'profile',\n    content: 'shnea: 풀스택 엔지니어 겸 AI 에이전트 시스템 아키텍트. 뇌대리, Jjapgma, Voxtune, 끄적 등 다중 에이전트 및 미디어 파이프라인 구축. 모듈화된 파이프라인과 신뢰성 높은 자동화 추구.'\n  },\n  {\n    title: '프로젝트 · 뇌대리 (Noedaeri)',\n    category: 'projects',\n    content: '뇌대리: 플랫폼과 외부 서비스(블로그, 포트폴리오, UI 빌더 등)의 고자원 AI 연산과 미디어 변환(FFmpeg HLS/썸네일, TTS, 임베딩)을 중계·관리하는 고성능 에이전트 시스템. Raya 난이도 라우팅(L1/L2/L3)과 n8n AI 에이전트 워크플로를 연동.'\n  },\n  {\n    title: '프로젝트 · Jjapgma (플랫폼 UI 빌더)',\n    category: 'projects',\n    content: 'Jjapgma: 컴포넌트 레지스트리, 템플릿, 반응형 디자인 토큰 및 MCP(Model Context Protocol)를 결합하여 사람과 AI가 동일한 캔버스 설계를 다룰 수 있는 웹 UI 플랫폼.'\n  },\n  {\n    title: '프로젝트 · Voxtune',\n    category: 'projects',\n    content: 'Voxtune: 음악 오디오 생성 및 보컬 튜닝, 오디오 후처리 파이프라인 서비스. 백엔드, 오디오 워커, PostgreSQL, Redis 연동 기반.'\n  },\n  {\n    title: '기술 스택',\n    category: 'tech_stack',\n    content: '주요 언어 및 기술: Python (FastAPI, Pytest), TypeScript/JavaScript (Node.js, React, Next.js), n8n (LangChain 에이전트/RAG 파이프라인), PostgreSQL (17), Docker, FFmpeg, SOPS+age 환경 암호화 관리.'\n  }\n];\n\nreturn docs.map(d => ({\n  json: {\n    text: `[${d.category}] ${d.title}\\n${d.content}`,\n    metadata: {\n      title: d.title,\n      category: d.category\n    }\n  }\n}));"
+        "jsCode": "const body = $input.first()?.json?.body ?? $input.first()?.json ?? {};\nconst collection = body.collection || 'portfolio';\nconst defaultDocs = [\n  {\n    title: '프로필 및 아키텍처 철학',\n    category: 'profile',\n    content: 'shnea: 풀스택 엔지니어 겸 AI 에이전트 시스템 아키텍트. 뇌대리, Jjapgma, Voxtune, 끄적 등 다중 에이전트 및 미디어 파이프라인 구축. 모듈화된 파이프라인과 신뢰성 높은 자동화 추구.'\n  },\n  {\n    title: '프로젝트 · 뇌대리 (Noedaeri)',\n    category: 'projects',\n    content: '뇌대리: 플랫폼과 외부 서비스(블로그, 포트폴리오, UI 빌더 등)의 고자원 AI 연산과 미디어 변환(FFmpeg HLS/썸네일, TTS, 임베딩)을 중계·관리하는 고성능 에이전트 시스템. Raya 난이도 라우팅(L1/L2/L3)과 n8n AI 에이전트 워크플로를 연동.'\n  },\n  {\n    title: '프로젝트 · Jjapgma (플랫폼 UI 빌더)',\n    category: 'projects',\n    content: 'Jjapgma: 컴포넌트 레지스트리, 템플릿, 반응형 디자인 토큰 및 MCP(Model Context Protocol)를 결합하여 사람과 AI가 동일한 캔버스 설계를 다룰 수 있는 웹 UI 플랫폼.'\n  },\n  {\n    title: '프로젝트 · Voxtune',\n    category: 'projects',\n    content: 'Voxtune: 음악 오디오 생성 및 보컬 튜닝, 오디오 후처리 파이프라인 서비스. 백엔드, 오디오 워커, PostgreSQL, Redis 연동 기반.'\n  },\n  {\n    title: '기술 스택',\n    category: 'tech_stack',\n    content: '주요 언어 및 기술: Python (FastAPI, Pytest), TypeScript/JavaScript (Node.js, React, Next.js), n8n (LangChain 에이전트/RAG 파이프라인), PostgreSQL (17), Docker, FFmpeg, SOPS+age 환경 암호화 관리.'\n  }\n];\n\nconst docs = Array.isArray(body.documents) && body.documents.length > 0 ? body.documents : defaultDocs;\n\nreturn docs.map(d => ({\n  json: {\n    collection: collection,\n    text: d.text || `[${d.category || 'general'}] ${d.title || ''}\\n${d.content || ''}`,\n    metadata: {\n      title: d.title || '',\n      category: d.category || '',\n      collection: collection,\n      ...(d.metadata || {})\n    }\n  }\n}));"
       },
-      "notes": "포트폴리오 문서를 text 필드와 metadata로 정규화합니다.",
+      "notes": "요청된 컬렉션과 문서 목록을 text 필드 및 메타데이터로 정규화합니다.",
       "notesInFlow": true
     },
     {
@@ -97,7 +97,7 @@
       ],
       "parameters": {
         "mode": "insert",
-        "qdrantCollection": "portfolio",
+        "qdrantCollection": "={{ $json.collection || 'portfolio' }}",
         "options": {}
       },
       "credentials": {
@@ -106,7 +106,7 @@
           "name": "뇌대리 Qdrant"
         }
       },
-      "notes": "포트폴리오 문서를 청크 분할 및 임베딩하여 Qdrant에 저장합니다.",
+      "notes": "요청된 컬렉션에 문서를 청크 분할 및 임베딩하여 Qdrant에 저장합니다.",
       "notesInFlow": true
     },
     {
@@ -119,7 +119,7 @@
         100
       ],
       "parameters": {
-        "jsCode": "const items = $input.all();\nreturn [{\n  json: {\n    status: 'success',\n    message: '포트폴리오 데이터 인덱싱 완료',\n    collection: 'portfolio',\n    chunk_count: items.length,\n    timestamp: new Date().toISOString()\n  }\n}];"
+        "jsCode": "const items = $input.all();\nconst collection = items[0]?.json?.collection || 'portfolio';\nreturn [{\n  json: {\n    status: 'success',\n    message: `${collection} 데이터 벡터 인덱싱 완료`,\n    collection: collection,\n    chunk_count: items.length,\n    timestamp: new Date().toISOString()\n  }\n}];"
       }
     }
   ],
@@ -128,7 +128,7 @@
       "main": [
         [
           {
-            "node": "포트폴리오 데이터 준비",
+            "node": "문서 데이터 정규화",
             "type": "main",
             "index": 0
           }
@@ -139,14 +139,14 @@
       "main": [
         [
           {
-            "node": "포트폴리오 데이터 준비",
+            "node": "문서 데이터 정규화",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "포트폴리오 데이터 준비": {
+    "문서 데이터 정규화": {
       "main": [
         [
           {
