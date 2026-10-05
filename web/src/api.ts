@@ -61,6 +61,70 @@ export const workerSchema = z.object({
   online: z.boolean(),
 });
 
+export const aiJobSchema = z.object({
+  id: z.string(),
+  request_id: z.string(),
+  task_type: z.string(),
+  project: z.string(),
+  environment: z.string(),
+  status: z.string(),
+  result: z.json().nullable().optional(),
+  error_code: z.string().nullable().optional(),
+  error_message: z.string().nullable().optional(),
+  created_at: z.string(),
+  updated_at: z.string().nullable().optional(),
+  finished_at: z.string().nullable().optional(),
+  expires_at: z.string().nullable().optional(),
+});
+
+export type AiJobResult = z.infer<typeof aiJobSchema>["result"];
+
+export const aiUsageSummaryItemSchema = z.object({
+  provider: z.string(),
+  model: z.string(),
+  task_type: z.string(),
+  call_count: z.number(),
+  total_prompt_tokens: z.number(),
+  total_completion_tokens: z.number(),
+  total_tokens: z.number(),
+});
+
+export const aiUsageRecordSchema = z.object({
+  id: z.string(),
+  job_id: z.string().nullable().optional(),
+  project: z.string(),
+  environment: z.string(),
+  request_id: z.string(),
+  task_type: z.string(),
+  provider: z.string(),
+  model: z.string(),
+  prompt_tokens: z.number(),
+  completion_tokens: z.number(),
+  total_tokens: z.number(),
+  model_tier: z.string().nullable().optional(),
+  created_at: z.string(),
+});
+
+export const aiUsageResponseSchema = z.object({
+  summary: z.array(aiUsageSummaryItemSchema),
+  records: z.array(aiUsageRecordSchema),
+});
+
+export const embeddingResponseSchema = z.object({
+  object: z.string(),
+  model: z.string(),
+  data: z.array(
+    z.object({
+      index: z.number(),
+      embedding: z.array(z.number()),
+    }),
+  ),
+  usage: z.object({
+    prompt_tokens: z.number(),
+    total_tokens: z.number(),
+  }),
+});
+
 export type User = z.infer<typeof userSchema>;
 
 export type Job = z.infer<typeof jobSchema>;
@@ -70,6 +134,16 @@ export type Service = z.infer<typeof serviceSchema>;
 export type Member = z.infer<typeof memberSchema>;
 
 export type Worker = z.infer<typeof workerSchema>;
+
+export type AiJob = z.infer<typeof aiJobSchema>;
+
+export type AiUsageSummaryItem = z.infer<typeof aiUsageSummaryItemSchema>;
+
+export type AiUsageRecord = z.infer<typeof aiUsageRecordSchema>;
+
+export type AiUsageResponse = z.infer<typeof aiUsageResponseSchema>;
+
+export type EmbeddingResponse = z.infer<typeof embeddingResponseSchema>;
 
 const messages = new Map(
   Object.entries({

@@ -294,7 +294,7 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
     def get_settings(request: Request) -> Settings:
         return getattr(request.app.state, "settings", settings)
 
-    def authenticate_platform_or_user(request: Request):
+    def authenticate_caller(request: Request) -> tuple[UUID, bool]:
         curr_settings = get_settings(request)
         if request.url.path.startswith("/api/v1/"):
             if not curr_settings.integration_key or not secrets.compare_digest(
@@ -302,82 +302,46 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
                 curr_settings.integration_key.encode(),
             ):
                 raise HTTPException(401, "platform_key_required")
-            return PLATFORM_OWNER
+            return PLATFORM_OWNER, True
         user = auth.user(request)
-        return user["id"]
+        return user["id"], (user.get("role") == "admin")
 
     @app.post("/api/v1/ai/jobs", status_code=200)
     async def create_platform_ai_job(request: Request, data: AiJobCreate):
-        owner_id = authenticate_platform_or_user(request)
+        owner_id, _ = authenticate_caller(request)
         return await execute_or_reuse_ai_job(db, get_settings(request), owner_id, data)
 
     @app.post("/api/ai/jobs", status_code=200)
     async def create_web_ai_job(request: Request, data: AiJobCreate):
-        owner_id = authenticate_platform_or_user(request)
+        owner_id, _ = authenticate_caller(request)
         return await execute_or_reuse_ai_job(db, get_settings(request), owner_id, data)
 
     @app.get("/api/v1/ai/jobs/{job_id}")
-    def get_platform_ai_job(request: Request, job_id: UUID):
-        owner_id = authenticate_platform_or_user(request)
-        with db.connect() as conn:
-            job = conn.execute(
-                "SELECT * FROM ai_jobs WHERE id=%s AND (owner_id=%s OR %s=%s)",
-                (job_id, owner_id, owner_id, PLATFORM_OWNER),
-            ).fetchone()
-        if not job:
-            raise HTTPException(404, "ai_job_not_found")
-        return _serialize_job(job)
-
     @app.get("/api/ai/jobs/{job_id}")
-    def get_web_ai_job(request: Request, job_id: UUID):
-        owner_id = authenticate_platform_or_user(request)
+    def get_ai_job(request: Request, job_id: UUID):
+        owner_id, is_admin = authenticate_caller(request)
         with db.connect() as conn:
             job = conn.execute(
-                "SELECT * FROM ai_jobs WHERE id=%s AND owner_id=%s",
-                (job_id, owner_id),
+                "SELECT * FROM ai_jobs WHERE id=%s AND (%s OR owner_id=%s)",
+                (job_id, is_admin, owner_id),
             ).fetchone()
         if not job:
             raise HTTPException(404, "ai_job_not_found")
         return _serialize_job(job)
 
     @app.get("/api/v1/ai/jobs")
-    def list_platform_ai_jobs(
-        request: Request,
-        project: str | None = None,
-        environment: str | None = None,
-        status: str | None = None,
-        limit: int = Query(default=50, ge=1, le=100),
-    ):
-        owner_id = authenticate_platform_or_user(request)
-        query = "SELECT * FROM ai_jobs WHERE (owner_id=%s OR %s=%s)"
-        params: list[Any] = [owner_id, owner_id, PLATFORM_OWNER]
-        if project:
-            query += " AND project=%s"
-            params.append(project)
-        if environment:
-            query += " AND environment=%s"
-            params.append(environment)
-        if status:
-            query += " AND status=%s"
-            params.append(status)
-        query += " ORDER BY created_at DESC LIMIT %s"
-        params.append(limit)
-
-        with db.connect() as conn:
-            rows = conn.execute(query, tuple(params)).fetchall()
-        return [_serialize_job(r) for r in rows]
-
     @app.get("/api/ai/jobs")
-    def list_web_ai_jobs(
+    def list_ai_jobs(
         request: Request,
         project: str | None = None,
         environment: str | None = None,
         status: str | None = None,
+        task_type: str | None = None,
         limit: int = Query(default=50, ge=1, le=100),
     ):
-        owner_id = authenticate_platform_or_user(request)
-        query = "SELECT * FROM ai_jobs WHERE owner_id=%s"
-        params: list[Any] = [owner_id]
+        owner_id, is_admin = authenticate_caller(request)
+        query = "SELECT * FROM ai_jobs WHERE (%s OR owner_id=%s)"
+        params: list[Any] = [is_admin, owner_id]
         if project:
             query += " AND project=%s"
             params.append(project)
@@ -387,6 +351,9 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
         if status:
             query += " AND status=%s"
             params.append(status)
+        if task_type:
+            query += " AND task_type=%s"
+            params.append(task_type)
         query += " ORDER BY created_at DESC LIMIT %s"
         params.append(limit)
 
@@ -395,31 +362,33 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
         return [_serialize_job(r) for r in rows]
 
     @app.post("/api/v1/ai/jobs/{job_id}/cancel")
-    def cancel_platform_ai_job(request: Request, job_id: UUID):
-        owner_id = authenticate_platform_or_user(request)
+    @app.post("/api/ai/jobs/{job_id}/cancel")
+    def cancel_ai_job(request: Request, job_id: UUID):
+        owner_id, is_admin = authenticate_caller(request)
         with db.connect() as conn:
             row = conn.execute(
                 """
                 UPDATE ai_jobs
                 SET status='cancelled', updated_at=now(), finished_at=now()
-                WHERE id=%s AND (owner_id=%s OR %s=%s) AND status='running'
+                WHERE id=%s AND (%s OR owner_id=%s) AND status='running'
                 RETURNING id
                 """,
-                (job_id, owner_id, owner_id, PLATFORM_OWNER),
+                (job_id, is_admin, owner_id),
             ).fetchone()
         if not row:
             raise HTTPException(404, "ai_job_not_found_or_not_running")
         return {"cancelled": True}
 
     @app.get("/api/v1/ai/usage")
-    def get_platform_ai_usage(
+    @app.get("/api/ai/usage")
+    def get_ai_usage(
         request: Request,
         project: str | None = None,
         environment: str | None = None,
         task_type: str | None = None,
         limit: int = Query(default=50, ge=1, le=200),
     ):
-        owner_id = authenticate_platform_or_user(request)
+        owner_id, is_admin = authenticate_caller(request)
         summary_query = """
             SELECT provider, model, task_type,
                    COUNT(*)::int AS call_count,
@@ -427,16 +396,16 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
                    COALESCE(SUM(completion_tokens), 0)::int AS total_completion_tokens,
                    COALESCE(SUM(total_tokens), 0)::int AS total_tokens
             FROM ai_usage
-            WHERE (owner_id=%s OR %s=%s)
+            WHERE (%s OR owner_id=%s)
         """
         records_query = """
             SELECT id, job_id, project, environment, request_id, task_type,
                    provider, model, prompt_tokens, completion_tokens, total_tokens,
                    model_tier, created_at
             FROM ai_usage
-            WHERE (owner_id=%s OR %s=%s)
+            WHERE (%s OR owner_id=%s)
         """
-        params: list[Any] = [owner_id, owner_id, PLATFORM_OWNER]
+        params: list[Any] = [is_admin, owner_id]
         filter_clause = ""
         if project:
             filter_clause += " AND project=%s"
@@ -470,19 +439,6 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
             "summary": [dict(s) for s in summary],
             "records": [serialize_rec(r) for r in records],
         }
-
-    @app.get("/api/ai/usage")
-    def get_web_ai_usage(
-        request: Request,
-        project: str | None = None,
-        environment: str | None = None,
-        task_type: str | None = None,
-        limit: int = Query(default=50, ge=1, le=200),
-    ):
-        user = auth.user(request, admin=True)
-        return get_platform_ai_usage(
-            request, project=project, environment=environment, task_type=task_type, limit=limit
-        )
 
     @app.post("/internal/ai/usage", status_code=201)
     def internal_record_usage(request: Request, data: AiUsageReport):

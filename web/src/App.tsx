@@ -4,6 +4,8 @@ import { z } from "zod";
 import { IntegrationGuide } from "./IntegrationGuide";
 import { RayaPanel } from "./RayaPanel";
 import { VideoResult } from "./VideoResult";
+import { AiJobsPanel } from "./AiJobsPanel";
+import { EmbeddingRagPanel } from "./EmbeddingRagPanel";
 import {
   jobSchema,
   memberSchema,
@@ -709,8 +711,8 @@ export default function App() {
 
   const tabs =
     user?.role === "admin"
-      ? ["작업", "서비스", "Raya", "연동 지침", "워커", "사용자"]
-      : ["작업", "서비스", "연동 지침"];
+      ? ["작업", "AI 작업", "임베딩·RAG", "서비스", "Raya", "연동 지침", "워커", "사용자"]
+      : ["작업", "AI 작업", "임베딩·RAG", "서비스", "연동 지침"];
 
   return (
     <>
@@ -834,6 +836,12 @@ export default function App() {
                 </button>
               )}
             </div>
+            {tab === "AI 작업" && (
+              <AiJobsPanel key={user.id} csrf={user.csrf} />
+            )}
+            {tab === "임베딩·RAG" && (
+              <EmbeddingRagPanel key={user.id} csrf={user.csrf} />
+            )}
             {tab === "연동 지침" && <IntegrationGuide />}
             {tab === "Raya" && user.role === "admin" && (
               <RayaPanel key={user.id} csrf={user.csrf} />
