@@ -1,6 +1,6 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 11 · 기준일: 2026-10-05
+문서 버전: 12 · 기준일: 2026-10-05
 
 ## 현재 연결 가능한 범위
 
@@ -17,19 +17,20 @@
 | 통합 영상 처리 | `video.package` | 썸네일·해상도별 HLS·ZIP 생성 가능 |
 | 플랫폼 서버 인증·요청 | `/api/v1/` | 전용 키 인증 구현, 수신 주소 설정 후 접수 |
 | 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
+| 공통 AI 작업 실행 | `/api/v1/ai/jobs` | 플랫폼 키 인증, 동기/비동기 n8n 연동 실행, 8대 작업·공통 RAG, `request_id` 멱등성 및 24시간 보존 구현 완료 |
 | 공통 텍스트 임베딩 | `/api/v1/ai/embeddings` | 플랫폼 키·AI 키·웹 세션 인증, 단일/배치 고성능 임베딩(768차원 등) 동기 API 구현 완료 |
 | Raya 난이도 판단 | 동기 JSON | 기존 플랫폼 키·n8n 실행 키·웹 세션 API, CPU 추론·3등급 분기 구현 |
-| n8n AI 작업 분기 예제 | 수동 실행 | 8개 작업·미등록 분기, 공통 RAG(동적 컬렉션 벡터 검색 및 컨텍스트 합성) → Raya → 3등급 분기 → LangChain 모델 연결 완료 |
+| n8n AI 작업 분기 연동 | 웹훅/수동 | 8개 작업·미등록 분기, 공통 RAG(동적 컬렉션 벡터 검색 및 컨텍스트 합성) → Raya → 3등급 분기 → LangChain 모델 연동 완료 |
 | 공통 벡터 데이터 인덱싱 예제 | 수동/웹훅 | 동적 컬렉션 지원 문서 분할·임베딩·Qdrant 벡터 저장소 인덱싱 파이프라인 워크플로 예제 제공 |
-| 공통 AI 사용량 관리 | 뇌대리 usage | 연결 설계만 반영. 수집·저장·조회 API 미구현 |
+| 공통 AI 사용량 관리 | `/api/v1/ai/usage` | 플랫폼 키·웹 관리자 세션, 공급자/모델/작업별 토큰 집계 및 상세 조회 API 구현 완료 |
 
-## n8n AI 작업 분기 초안
+## n8n AI 작업 분기 연동
 
 ### 외부 요청은 플랫폼에서 접수
 
 외부 서비스의 AI·n8n 요청은 **외부 서비스 → 플랫폼 → 뇌대리 → n8n** 순서로 연결한다. 플랫폼은 파일서비스 연동과 동일한 `NOEDAERI_PLATFORM_API_KEY`를 `X-Noedaeri-API-Key` 헤더로 전달한다. 개별 앱에 뇌대리 키나 n8n 관리 키를 배포하지 않는다. 웹 관리·검수는 기존 플랫폼 로그인·승인 세션을 사용한다.
 
-현재 플랫폼에서 실제 호출할 수 있는 AI 기능은 아래 `POST /api/v1/ai/raya/route` 난이도 판단이다. n8n 작업 접수·실행·결과 수령·usage 조회 API는 아직 미구현이며 수동 초안을 외부 작업 실행 API로 안내하지 않는다. 향후 플랫폼 접수에는 요청 ID·작업 종류·플랫폼이 확인한 서비스/사용자 식별을 연결하고 뇌대리에서 라우팅·캐시·사용량·실행 상태를 관리한다. n8n에는 검증된 작업만 실행용 인증으로 전달하며 n8n 관리 API 키를 외부 요청 인증에 재사용하지 않는다.
+현재 플랫폼에서 호출할 수 있는 공통 AI 작업 실행 API는 `POST /api/v1/ai/jobs`다. 요청 시 요청 ID(`request_id`), 작업 종류(`task_type`), 프로젝트(`project`), 환경(`environment`)을 전달하며, 뇌대리가 중복 실행 방지, n8n 라우팅, 실행 상태 추적, 모델별 토큰 사용량(`ai_usage`) 기록 및 24시간 결과 보존을 관리한다. n8n에는 검증된 작업만 실행용 웹훅으로 전달하며 n8n 관리 API 키를 외부 요청 인증에 재사용하지 않는다.
 
 [가져오기용 워크플로 JSON](https://github.com/shnea/noedaeri/blob/main/examples/n8n_ai_routing_sample.json)을 제공한다. 수동 실행 → 가상 요청 → 작업 종류 분기 → 빈 지침 → 실제 Raya 추론 → 성능 등급 분기 순서다. 각 분기의 `instruction`을 비워 두었다. 각 모델 분기에는 n8n의 LangChain Agent와 전용 Chat Model 노드가 연결되어 직접 모델을 호출한다.
 
@@ -125,21 +126,67 @@ Raya에는 현재 사용자 요청과 필요한 텍스트 문맥을 전달하고
    - 트리거: 수동 실행(`manualTrigger`) 및 웹훅(`POST /webhook/vector-index`).
    - 파이프라인: 임의 컬렉션의 문서 목록 수신 → `RecursiveCharacterTextSplitter`(500자/50자 중복) 분할 → Gemini `gemini-embedding-001` 임베딩 → 동적 Qdrant 컬렉션(`$json.collection`)에 `insert` 모드로 업서트 → 인덱싱 완료 상태 및 청크 수 반환.
 
-### 뇌대리 usage로 통합할 범위
+### 공통 AI 작업 실행 API
 
-사용량의 저장·조회 책임은 뇌대리로 모으고 n8n은 실제 호출의 사용량을 보고하는 구조로 계획한다. 기존 수집기는 특정 앱의 요청 ID·콜백 URL·토큰에 묶여 있으므로 이름만 바꾸거나 콜백을 먼저 끊지 않는다. 저장 API·서비스별 인증·조회 권한을 구현하고 이전 집계와 대조한 뒤 전환한다. **현재 usage 수신·조회 엔드포인트는 제공하지 않는다.**
+플랫폼은 `POST /api/v1/ai/jobs`를 호출하여 8대 AI 작업 및 RAG 질의응답을 실행한다.
 
-| 기록 | 기준 |
-|---|---|
-| 요청 연결 | 서비스·소유권을 서버에서 확인한 `request_id`, `task_type`. 공급자 호출 ID 또는 실행·노드·실행 차수·항목 식별자를 연결해 같은 수집 보고의 중복을 제거한다. |
-| 모델·실행 | Raya 추천 등급과 실제 `provider`·응답 모델, 호출·재시도 차수, 실행 상태·시간을 구분한다. 실제 모델을 모르면 미확인으로 남긴다. |
-| 토큰 | 공급자가 반환한 입력·출력·총 토큰만 집계한다. 추정치를 실제 사용량에 더하지 않고 누락은 미확인으로 표시한다. 도구를 사용하는 Agent의 여러 모델 호출과 실패 전 발생한 호출도 각각 남긴다. |
-| 중복·재시도 | 동일 보고의 재전송은 한 번만 반영한다. 실제로 새 모델 호출이 발생한 재시도는 별도의 사용량이다. 성공한 요청만 집계하면 실패 비용을 누락할 수 있다. |
-| 범위·보존 | 관리자는 전체 집계, 연결 서비스는 플랫폼을 통해 자신의 요청만 조회하도록 설계한다. 서비스·사용자 식별은 인증된 플랫폼이 확인해 전달하며 임의 식별자로 다른 소유자의 결과를 조회하지 않는다. 원문·지침·응답 전문·인증 토큰·임의 콜백 주소를 usage에 저장하지 않는다. 보존 기간·집계 기준·한도·실패 보고 정책은 구현 전에 확정한다. |
+| 엔드포인트 | 메서드 | 인증 | 설명 |
+|---|---|---|---|
+| `/api/v1/ai/jobs` | POST | 플랫폼 키 (`X-Noedaeri-API-Key`) | AI 작업 실행 (동기/비동기, 멱등성 보장) |
+| `/api/v1/ai/jobs/{job_id}` | GET | 플랫폼 키 / 세션 | 작업 상태 및 결과 조회 |
+| `/api/v1/ai/jobs` | GET | 플랫폼 키 / 세션 | 작업 목록 조회 (`project`, `environment`, `status` 필터) |
+| `/api/v1/ai/jobs/{job_id}/cancel` | POST | 플랫폼 키 / 세션 | 실행 중인 작업 취소 |
+| `/api/v1/ai/usage` | GET | 플랫폼 키 / 관리자 세션 | 모델·공급자·작업별 토큰 사용량 집계 및 상세 기록 조회 |
+| `/internal/ai/usage` | POST | 워커 키 / Raya 키 | n8n 및 내부 워커의 사용량 보고 (중복 보고 무시) |
 
-Raya의 CPU 추론 시간·입력 토큰은 라우터 운영 지표로 구분하고 외부 모델 사용량에 합산하지 않는다. 무료 모델도 사용량을 기록하지만 토큰 수만으로 비용·무료 한도를 단정하지 않는다. 공급자마다 사용량 응답 형식이 달라 별도 정규화가 필요하다. 수집 실패는 AI 결과 실패와 구분하고 보고를 재시도할 때 모델을 다시 호출하지 않는다.
+#### 요청 필드 (`POST /api/v1/ai/jobs`)
+- `request_id` (string, 필수): 요청 고유 ID (최대 128자). `(owner_id, project, environment, request_id)` 조합으로 중복 실행을 엄격히 방지한다. 이미 완료된 요청이 재인입되면 모델을 다시 호출하지 않고 기존 결과를 반환한다 (`reused: true`).
+- `task_type` (string, 필수): 작업 종류 (`blog.tags`, `blog.summary`, `portfolio.search`, `ui.render`, `comment.generate`, `document.analyze`, `code.analyze`, `chat.general`).
+- `prompt` (string, 필수): 사용자 질문 또는 원문 프롬프트 (최대 200,000자).
+- `project` (string, 선택, 기본: `"default"`): 프로젝트 식별자 (`portfolio`, `blog`, `uibuilder` 등).
+- `environment` (string, 선택, 기본: `"production"`): 환경 식별자 (`production`, `staging`, `development`).
+- `input` (object, 선택): 부가 옵션 (RAG 컬렉션 지정 `collection` 등).
+- `sync` (boolean, 선택, 기본: `true`): `true`인 경우 n8n 실행 완료 후 최종 결과를 즉시 반환. `false`인 경우 비동기 접수 상태(`running`) 즉시 반환.
 
-usage와 학습 데이터는 구분한다. 관리자 검토·파인튜닝을 위한 원문·결과 수집, 접근 권한, 보존 정책, 내보내기와 학습 실행은 아직 구현하지 않았다. 이후에는 추천 등급·실제 모델·결과 품질·관리자가 고른 적정 등급을 연결해 검토할 수 있도록 별도 설계한다.
+#### 응답 예시 (HTTP 200)
+```json
+{
+  "id": "22605fe5-e322-4aee-bd05-b9772f3ab835",
+  "request_id": "req-20261005-001",
+  "task_type": "portfolio.search",
+  "project": "portfolio",
+  "environment": "production",
+  "status": "succeeded",
+  "result": {
+    "ai_result": "답변 텍스트...",
+    "provider": "openrouter",
+    "model": "openrouter/free",
+    "model_tier": "L1",
+    "usage": {
+      "prompt_tokens": 10,
+      "completion_tokens": 25,
+      "total_tokens": 35
+    },
+    "retrieved_context": "..."
+  },
+  "error_code": null,
+  "error_message": null,
+  "created_at": "2026-10-05T22:27:10.728054+09:00",
+  "finished_at": "2026-10-05T22:27:33.428225+09:00",
+  "expires_at": "2026-10-06T22:27:10.728054+09:00",
+  "reused": false
+}
+```
+
+#### 보존 및 정리 정책
+- AI 작업 결과는 생성 완료 시각부터 **24시간**(`expires_at`) 보관되며 이후 자동 정리 대상이 된다.
+- 작업 이력 및 사용량 집계는 결과 만료 후에도 보존된다.
+
+### 공통 AI 사용량(usage) 관리
+
+- **조회 API**: `GET /api/v1/ai/usage?project=...&environment=...&task_type=...&limit=50`
+- **집계 항목**: 공급자(`provider`), 모델(`model`), 작업 종류(`task_type`)별 총 호출 수(`call_count`), 프롬프트 토큰(`total_prompt_tokens`), 완료 토큰(`total_completion_tokens`), 총 토큰(`total_tokens`).
+- **중복 방지 원칙**: `(project, environment, request_id, provider, model)` 유니크 제약 조건을 통해 동일 보고의 재전송으로 토큰이 중복 집계되거나 모델이 재호출되는 현상을 완벽히 차단한다.
 
 ## Raya 난이도 판단 API
 

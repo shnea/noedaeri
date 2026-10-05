@@ -321,6 +321,8 @@ def serve(component):
             "config/runtime.enc.env",
             "--config",
             "config/ai-providers.enc.env",
+            "--config",
+            "config/n8n.enc.env",
         ]
     os.chdir(ROOT)
     os.execvpe(args[0], args, env)

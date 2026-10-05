@@ -55,3 +55,46 @@ CREATE TABLE IF NOT EXISTS raya_policy (
  minimum_keep_seconds integer NOT NULL CHECK(minimum_keep_seconds BETWEEN 0 AND 86400),
  idle_seconds integer NOT NULL CHECK(idle_seconds BETWEEN 1 AND 86400)
 );
+
+CREATE TABLE IF NOT EXISTS ai_jobs (
+ id uuid PRIMARY KEY,
+ owner_id uuid NOT NULL REFERENCES users(id),
+ project text NOT NULL DEFAULT 'default',
+ environment text NOT NULL DEFAULT 'production',
+ request_id text NOT NULL,
+ task_type text NOT NULL,
+ prompt text NOT NULL,
+ input jsonb NOT NULL DEFAULT '{}',
+ status text NOT NULL CHECK(status IN ('pending','running','succeeded','failed','cancelled')),
+ result jsonb,
+ error_code text,
+ error_message text,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ updated_at timestamptz NOT NULL DEFAULT now(),
+ finished_at timestamptz,
+ expires_at timestamptz NOT NULL DEFAULT now() + interval '24 hours',
+ UNIQUE(owner_id, project, environment, request_id)
+);
+CREATE INDEX IF NOT EXISTS ai_jobs_owner_created ON ai_jobs(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ai_jobs_request ON ai_jobs(project, environment, request_id);
+
+CREATE TABLE IF NOT EXISTS ai_usage (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ job_id uuid REFERENCES ai_jobs(id) ON DELETE SET NULL,
+ owner_id uuid NOT NULL REFERENCES users(id),
+ project text NOT NULL DEFAULT 'default',
+ environment text NOT NULL DEFAULT 'production',
+ request_id text NOT NULL,
+ task_type text NOT NULL,
+ provider text NOT NULL,
+ model text NOT NULL,
+ prompt_tokens integer NOT NULL DEFAULT 0,
+ completion_tokens integer NOT NULL DEFAULT 0,
+ total_tokens integer NOT NULL DEFAULT 0,
+ model_tier text,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(project, environment, request_id, provider, model)
+);
+CREATE INDEX IF NOT EXISTS ai_usage_project_env ON ai_usage(project, environment, created_at DESC);
+CREATE INDEX IF NOT EXISTS ai_usage_owner ON ai_usage(owner_id, created_at DESC);
+

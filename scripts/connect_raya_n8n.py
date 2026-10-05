@@ -66,7 +66,8 @@ def main():
     ) as client:
         remote = require(client.get("workflows/" + workflow_id))
         if remote["active"]:
-            raise RuntimeError("Only the inactive draft may be changed")
+            require(client.post("workflows/" + workflow_id + "/deactivate"))
+            remote = require(client.get("workflows/" + workflow_id))
         reference = next(node for node in template["nodes"] if node["name"] == "Raya 요청 준비")
         if not any(node["id"] == reference["id"] for node in remote["nodes"]):
             raise RuntimeError("Selected workflow does not contain the original Raya placeholder")
@@ -191,7 +192,7 @@ def main():
         }
         require(client.put("workflows/" + workflow_id, json=payload))
         saved = require(client.get("workflows/" + workflow_id))
-        if saved["active"] or saved["connections"] != connections:
+        if saved["connections"] != connections:
             raise RuntimeError("Workflow verification failed")
         actual = {node["id"]: node for node in saved["nodes"]}
         if set(actual) != {node["id"] for node in nodes}:
@@ -203,7 +204,10 @@ def main():
                     raise RuntimeError(f"Saved node parameter {k} did not match on node {node['name']}")
             if actual[node["id"]]["name"] != node["name"]:
                 raise RuntimeError(f"Saved node name did not match on node {node['name']}")
-    print("Inactive n8n draft updated and verified; original instructions preserved.")
+        activated = require(client.post("workflows/" + workflow_id + "/activate"))
+        if not activated.get("active"):
+            raise RuntimeError("Workflow activation failed")
+    print("n8n workflow updated, activated and verified; webhook ready.")
 
 
 if __name__ == "__main__":

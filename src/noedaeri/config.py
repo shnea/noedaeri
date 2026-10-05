@@ -36,10 +36,16 @@ class Settings:
     raya_timeout: int = 90
     raya_memory_reserve: int = 3 * 1024**3
     gemini_api_key: str = ""
+    n8n_origin: str = ""
+    n8n_ai_webhook_url: str = ""
 
     @classmethod
     def from_env(cls):
+        origin = os.environ.get("N8N_ORIGIN", "").rstrip("/")
         settings = cls(
+            n8n_origin=origin,
+            n8n_ai_webhook_url=os.environ.get("N8N_AI_WEBHOOK_URL")
+            or (f"{origin}/webhook/noedaeri-ai" if origin else ""),
             raya_enabled=os.environ.get("RAYA_ENABLED", "0") == "1",
             raya_key=os.environ.get("NOEDAERI_RAYA_API_KEY", ""),
             gemini_api_key=os.environ.get("GEMINI_API_KEY", ""),

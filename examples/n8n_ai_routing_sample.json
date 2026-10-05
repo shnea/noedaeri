@@ -2,6 +2,37 @@
   "name": "뇌대리 · AI 작업 분기 초안",
   "nodes": [
     {
+      "id": "e1111111-1111-4000-8000-000000000001",
+      "name": "웹훅 접수",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -720,
+        360
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "noedaeri-ai",
+        "responseMode": "lastNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "e2222222-2222-4000-8000-000000000002",
+      "name": "요청 정규화",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -480,
+        360
+      ],
+      "parameters": {
+        "jsCode": "const raw = $input.first()?.json || {};\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\n\nconst requestId = body.request_id || raw.request_id || 'req-' + Date.now();\nconst taskType = body.task_type || raw.task_type || 'chat.general';\nconst prompt = body.prompt || raw.prompt || '';\nconst project = body.project || raw.project || 'default';\nconst environment = body.environment || raw.environment || 'production';\nconst collection = body.collection || raw.collection || (body.input && body.input.collection) || '';\n\nreturn [{\n  json: {\n    request_id: requestId,\n    task_type: taskType,\n    prompt: prompt,\n    project: project,\n    environment: environment,\n    collection: collection,\n    ...(body.input || {}),\n    ...body\n  }\n}];"
+      },
+      "notes": "웹훅으로 유입된 AI 요청을 표준 필드(request_id, task_type, prompt 등)로 정규화합니다.",
+      "notesInFlow": true
+    },
+    {
       "id": "9d7a6f24-ea84-583a-853c-a1e7d3500417",
       "name": "수동 실행",
       "type": "n8n-nodes-base.manualTrigger",
@@ -315,10 +346,12 @@
         320
       ],
       "parameters": {
-        "mode": "retrieve",
+        "mode": "load",
+        "prompt": "={{ $json.prompt }}",
         "qdrantCollection": "={{ $json.collection || $json.task_type.split('.')[0] }}",
         "options": {}
       },
+      "onError": "continueRegularOutput",
       "credentials": {
         "qdrantApi": {
           "id": "",
@@ -1068,7 +1101,7 @@
         560
       ],
       "parameters": {
-        "jsCode": "return $input.all().map((item, index) => {\n  const text = item.json.output || item.json.text || (typeof item.json === 'string' ? item.json : JSON.stringify(item.json));\n  return {\n    json: {\n      ...item.json,\n      status: 'completed',\n      ai_result: text,\n    },\n    pairedItem: { item: index },\n  };\n});"
+        "jsCode": "return $input.all().map((item, index) => {\n  let req = {};\n  try { req = $('요청 정규화').first()?.json || {}; } catch(e) {}\n  if (!req.task_type) { try { req = $('샘플 요청 8종 + 미등록').first()?.json || {}; } catch(e) {} }\n  \n  let raya = {};\n  try { raya = $('Raya 난이도 판단').first()?.json || {}; } catch(e) {}\n  \n  let rag = {};\n  try { rag = $('공통 컨텍스트 및 지침 합성').first()?.json || {}; } catch(e) {}\n  \n  const text = item.json.output || item.json.text || (typeof item.json === 'string' ? item.json : JSON.stringify(item.json));\n  const tier = raya.routing?.model_tier || 'L1';\n  \n  const providerMap = {\n    L1: { provider: 'openrouter', model: 'openrouter/free' },\n    L2: { provider: 'groq', model: 'openai/gpt-oss-120b' },\n    L3: { provider: 'google', model: 'models/gemini-3.8-flash' },\n    mistral: { provider: 'mistral', model: 'ministral-8b-latest' }\n  };\n  const providerInfo = providerMap[tier] || { provider: 'unknown', model: 'unknown' };\n  \n  const promptText = req.prompt || '';\n  const promptTokens = Math.max(1, Math.ceil(promptText.length / 4));\n  const completionTokens = Math.max(1, Math.ceil((text?.length || 0) / 4));\n  \n  return {\n    json: {\n      request_id: req.request_id || item.json.request_id || 'req-' + Date.now(),\n      task_type: req.task_type || item.json.task_type || 'chat.general',\n      project: req.project || item.json.project || 'default',\n      environment: req.environment || item.json.environment || 'production',\n      status: 'completed',\n      ai_result: text,\n      provider: providerInfo.provider,\n      model: providerInfo.model,\n      model_tier: tier,\n      usage: {\n        prompt_tokens: promptTokens,\n        completion_tokens: completionTokens,\n        total_tokens: promptTokens + completionTokens\n      },\n      routing: raya.routing || null,\n      retrieved_context: rag.retrieved_context || null\n    },\n    pairedItem: { item: index },\n  };\n});"
       },
       "notes": "각 AI Agent의 실행 결과를 취합하여 표준 형식으로 정리합니다.",
       "notesInFlow": true
@@ -1090,6 +1123,28 @@
     }
   ],
   "connections": {
+    "웹훅 접수": {
+      "main": [
+        [
+          {
+            "node": "요청 정규화",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "요청 정규화": {
+      "main": [
+        [
+          {
+            "node": "작업 종류 분기",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "수동 실행": {
       "main": [
         [
