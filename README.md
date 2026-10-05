@@ -6,7 +6,7 @@
 
 ## 연동 지침
 
-승인된 사용자에게 웹의 **연동 지침** 메뉴를 제공한다. [원본 Markdown](docs/SERVICE_INTEGRATION.md)을 같은 내용으로 표시하고 복사·다운로드할 수 있다. 현재 웹 사용자 세션 API와 아직 준비 중인 외부 서비스 인증을 구분한다. 기능 변경 시 이 문서도 함께 갱신한다.
+승인된 사용자에게 웹의 **연동 지침** 메뉴를 제공한다. [원본 Markdown](docs/SERVICE_INTEGRATION.md)을 같은 내용으로 표시하고 복사·다운로드할 수 있다. 현재 웹 사용자 세션 API와 플랫폼 전용 키 API를 구분한다. 기능 변경 시 이 문서도 함께 갱신한다.
 
 ## 개발 환경
 
@@ -58,7 +58,7 @@ DB 검사는 로컬 소켓만 사용하는 일회성 PostgreSQL을 띄운 뒤 �
 
 `web/tools/oxlint/anti-slop`은 프로젝트에 보관한 원본 플러그인이다. 원본 출처와 의도적인 변경 사항은 해당 디렉터리의 UPSTREAM.md에 기록한다.
 
-플랫폼 이관 준비 상태와 다음 개발 순서는 [기능 대응표](docs/PLATFORM_COMPATIBILITY.md)를 기준으로 관리한다.
+플랫폼 이관 준비 상태는 [기능 대응표](docs/PLATFORM_COMPATIBILITY.md), 다음 주부터 진행할 전체 순서는 [다음 작업표](docs/NEXT_WORK.md)를 참고한다.
 
 
 ### 플랫폼 전용 연동
