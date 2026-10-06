@@ -105,14 +105,14 @@ def main():
                         "name": "뇌대리 OpenRouter",
                     }
                 }
-            elif node["name"] == "L2 · Groq Model" and values.get("N8N_GROQ_CREDENTIAL_ID"):
+            elif node["name"] in ("L2 · Groq Model", "L3 · Groq Model") and values.get("N8N_GROQ_CREDENTIAL_ID"):
                 node["credentials"] = {
                     "groqApi": {
                         "id": values["N8N_GROQ_CREDENTIAL_ID"],
                         "name": "뇌대리 Groq",
                     }
                 }
-            elif node["name"] == "L3 · Gemini Model" and values.get("N8N_GEMINI_CREDENTIAL_ID"):
+            elif node["name"] in ("L3 · Gemini Model", "L2 · Gemini Model") and values.get("N8N_GEMINI_CREDENTIAL_ID"):
                 node["credentials"] = {
                     "googlePalmApi": {
                         "id": values["N8N_GEMINI_CREDENTIAL_ID"],
@@ -156,18 +156,12 @@ def main():
             str(uuid.uuid5(uuid.NAMESPACE_URL, "noedaeri.example/draft/l4-output")),
             "7a9e3f1c-5d2b-4e8a-91f0-8c2d1b4e6a39",
         }
-        unchanged = {"n8n-nodes-base.manualTrigger", "n8n-nodes-base.set"}
+        unchanged = {"n8n-nodes-base.manualTrigger"}
         remote_by_id = {node["id"]: node for node in remote["nodes"]}
         nodes = []
         for node in template["nodes"]:
             original = remote_by_id.get(node["id"])
-            if original and (
-                node["type"] in unchanged
-                or node["name"]
-                in {
-                    "작업 종류 분기",
-                }
-            ):
+            if original and node["type"] in unchanged:
                 nodes.append(original)
             else:
                 nodes.append(node)

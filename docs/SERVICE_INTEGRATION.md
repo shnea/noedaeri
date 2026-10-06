@@ -43,52 +43,38 @@
 | `blog.summary` | 블로그 요약 |
 | `portfolio.search` | 포트폴리오 검색 |
 | `ui.render` | UI 빌더 화면 생성 |
-| `comment.generate` | 댓글 생성 |
+| `comment.generate` | 댓글 생성 (자동 답글) |
 | `document.analyze` | 문서 분석 |
 | `code.analyze` | 코드 분석 |
 | `chat.general` | 일반 질답 |
+| `article.draft` | 실험실 글 초안 (블로그 초안) |
 
-입력은 `{ "task_type": "blog.tags", "prompt": "샘플 글" }` 형태다. 기본 샘플 노드는 8개 작업과 미등록 작업을 각각 하나씩 생성한다. 결과는 입력을 유지하고 `task_name`, 빈 `instruction`, `status: "awaiting_instructions"`를 추가한다. 등록되지 않은 작업은 별도 분기에서 `status: "unsupported_task"`로 표시하며 일반 질답으로 자동 처리하지 않는다. 노드 자체의 오류는 n8n 실행 실패로 남고 재시도 설정은 없다.
-
-Raya 판단은 `routing` 아래 원래 요청과 합쳐 제공한다. HTTP 노드는 한 번에 한 요청씩 호출하고 실패 시 실행을 중단한다. 등급 Switch는 `routing.model_tier`의 `L1`, `L2`, `L3`를 지정된 공급자 연결 분기로 보낸다. 순환 후보를 준비하고 n8n 내부의 LangChain 에이전트 노드로 모델을 호출한다. 예상하지 못한 등급은 별도 확인 분기로 보낸다.
-
-새 작업은 Switch에 `task_type` 규칙을 추가하고 지침 노드를 복제한 뒤 출력에 연결한다. 작업 종류는 모델 성능 등급과 별개다. 공급자 순서는 L1 OpenRouter `openrouter/free`, L2 GroqCloud `openai/gpt-oss-120b`, L3 Gemini `models/gemini-3.8-flash`, 폴백 Mistral `ministral-8b-latest`다.
-
-샘플은 n8n 편집 권한으로 수동 실행하거나 웹훅 접수 노드로 요청을 받는다. 웹훅 공개 주소와 접근 제어는 n8n 배포 설정에서 관리한다. 가져오기용 JSON에는 비밀키·실제 서버 주소·Credential ID가 없다. n8n HTTP 노드에 실제 뇌대리 주소와 아래 계약의 Header Auth를 선택한다. 실행 데이터 보관·삭제는 해당 n8n 인스턴스의 정책을 따르며 뇌대리 웹 테스트의 24시간 보관을 적용하지 않는다. 실제 AI 답변의 호출 한도·결과 수령·학습 데이터 보존 계약은 후속 범위다.
+입력은 `{ "task_type": "blog.tags", "prompt": "샘플 글" }` 또는 `{ "task_type": "article.draft", "context": { "topic": "양자 컴퓨팅" } }` 형태다. 기본 샘플 노드는 각 작업과 미등록 작업을 지원한다.
 
 ### 3단계 공급자와 하향 폴백
 
-| 단계 | 지정 공급자 | 초안 상태 |
+| 단계 | 지정 공급자 | 현재 모델 |
 |---|---|---|
-| L1 | OpenRouter `openrouter/free` | n8n LangChain 모델 연결 |
-| L2 | GroqCloud `openai/gpt-oss-120b` | n8n LangChain 모델 연결 |
-| L3 | Google AI Studio `models/gemini-3.8-flash` | n8n LangChain 모델 연결 |
-| 폴백 | Mistral 직접 API `ministral-8b-latest` | n8n LangChain 모델 연결 |
+| L1 | OpenRouter | `openrouter/free` |
+| L2 | Google AI Studio | `models/gemini-3.5-flash-lite` |
+| L3 | GroqCloud | `openai/gpt-oss-120b` |
+| 폴백 | Mistral 직접 API | `ministral-8b-latest` |
 
-Raya가 L1~L3 중 시작 등급을 판단한다. 실제 에이전트 실패 경로는 **L3 → L2 → L1 → Mistral → 실패 종료**로 연결한다. L2에서 시작하면 L2 → L1 → Mistral, L1에서 시작하면 L1 → Mistral을 시도한다. 성공하면 결과 정리로 이동하며 자동으로 상위 등급이나 유료 모델을 다시 호출하지 않는다. `provider_plan`의 순환 후보 목록은 참고 정보이며 실제 에러 분기는 위 하향 순서다.
+Raya가 L1~L3 중 시작 등급을 판단한다. 실제 에이전트 실패 경로는 **L3 → L2 → L1 → Mistral → 실패 종료**로 연결한다. L2에서 시작하면 L2 → L1 → Mistral, L1에서 시작하면 L1 → Mistral을 시도한다. 성공하면 결과 정리로 이동하며 자동으로 상위 등급이나 유료 모델을 다시 호출하지 않는다. 각 에이전트의 `onError: continueErrorOutput` 오류 출력을 다음 공급자 전환 노드에 연결하여 원래 요청·지침·컨텍스트를 안전하게 보존한다.
 
-각 에이전트의 `onError: continueErrorOutput` 오류 출력을 다음 공급자 전환 노드에 연결한다. 전환 노드는 원래 요청·지침·검색 문맥을 유지한다. 결과 정리는 최종 실행 공급자를 기준으로 provider·model·model_tier를 표시한다. 현재 토큰 수는 텍스트 길이 기반 추정치이며 공급자의 실제 청구 토큰 수가 아니다.
-
-Mistral까지 실패하면 `status: failed`와 `error_code: all_providers_exhausted`를 반환한다. 이 코드명은 현재 워크플로의 종료 식별자이며 실제 한도 소진을 확정하는 증거가 아니다. 인증·입력 오류·일반 서버 장애도 에이전트 실패 분기로 전달될 수 있다. 공급자별 잔여 한도 판독·필수 기능 호환성 검사는 아직 구현하지 않았다. 무한 폴백이나 동일 공급자 자동 재호출은 하지 않는다. Raya 및 검색 HTTP 호출 자체가 실패하면 에이전트 폴백에 도달하기 전에 n8n 실행이 실패할 수 있다.
-
-### 이미지 여부와 결과 캐시
-
-`Raya 요청 준비` 노드는 명시적인 `has_images`·`requirements.vision`, 이미지 참조·이미지 배열·대화의 이미지 content에서 이미지 포함 여부를 정리한다. 도구와 구조화 출력 요구는 각각 `requirements.tools`, `requirements.structured_output`에 남긴다. 실제 공급자 선택은 해당 모델의 기능을 별도로 확인해야 한다. 현재 Raya는 포함 여부와 텍스트만 판단하며 이미지 분석을 제공하지 않는다.
-
-결과 캐시는 인증·소유권 확인 뒤 Raya/공급자 호출보다 먼저 조회하도록 계획한다. 서비스·소유권 범위·작업 종류·입력 내용 및 이미지 식별/버전·UI revision·지침 버전·모델 정책을 키에 반영한다. 적중하면 기존 결과를 반환하고 모델을 호출하지 않으며 cache hit와 실제 공급자 사용량을 분리한다. 댓글의 thread/memory처럼 변화하는 문맥도 키에 포함해야 한다. 권한이 바뀐 결과와 만료된 결과는 재사용하지 않는다.
-
-현재 초안은 `cache: {status: "not_connected", hit: null}`을 표시한다. 저장소·TTL·조회·무효화·용량 제한은 미구현이며 요청자가 보낸 cache hit를 신뢰해 결과를 반환하지 않는다. 기존 블로그의 hash 기반 캐시는 기존 흐름에 유지한다. Raya 추론 응답을 저장하는 캐시와 학습 원문 저장은 이번 범위에 포함하지 않는다.
+---
 
 ## 기존 AI 흐름을 연결하는 기준
 
-아래는 기존 워크플로를 확인해 정리한 **후속 연결 설계**다. 현재 수동 초안에는 연결 메모만 반영했으며 운영 워크플로의 입력·출력·저장 대상은 변경하지 않았다. 기존 흐름의 역할을 유지하고 AI 호출 직전에 공통 라우팅을 연결한다.
+기존 운영 워크플로(`shnea.kr` 끄적 서비스 등)의 요청 접수·점유(`claim`)·캐시 확인·결과 DB 저장(`PUT /result`)·실패 기록 흐름은 그대로 유지하고, 실제 AI 추론 단계에서 **뇌대리 공통 AI 라우터(`POST /webhook/noedaeri-ai`)**를 호출하여 다단계 폴백(L3 Groq ↔ L2 Gemini ↔ L1 OpenRouter ↔ Mistral)을 활용한다.
 
 | 분기 | 유지할 계약·연결 지점 |
 |---|---|
-| `blog.tags` | `hash`로 처리 점유·캐시 확인 → `context`와 `system` 구성 → 라우팅·AI 호출 → 태그 구조 검증 → `{hash,result}` 저장. 기존 태그는 1~8개, 항목당 1~30자다. |
-| `blog.summary` | 동일한 점유·캐시·저장 흐름. 결과의 `summary`는 비어 있지 않은 문자열이며 최대 500자다. |
-| `comment.generate` | 원문의 target·thread·memory·말투 문맥과 작업 지침을 유지한다. 기존 출력의 `comment` 계약과 추가 필드·길이 검증 범위는 연결 전에 확정한다. 현재 JSON 객체 검사만으로 완전한 댓글 검증이 된다고 간주하지 않는다. |
-| `ui.render` | `messages`·이미지 참조 → 도구를 사용하는 AI Agent → `{reply,imageFileId}` 응답. MCP의 실제 컴포넌트·템플릿·디자인 문맥, 읽기 전용 권한, revision 충돌 검사, 사용자 검토 후 적용할 변경 제안을 유지한다. |
+| `blog.tags` | 본문 주제를 대표하는 1~8개 태그 배열 추출. 결과 구조: `{"tags": ["태그1", "태그2"]}` (항목당 1~30자). |
+| `blog.summary` | 핵심 내용을 2~4문장으로 압축하는 자연스러운 해체 반말 요약. 결과 구조: `{"summary": "..."}` (최대 500자). |
+| `comment.generate` | 원문의 target 댓글·thread·memory·말투 문맥과 캐릭터 페르소나 지침을 반영한 답글 생성. 결과 구조: `{"comment": "..."}`. |
+| `article.draft` | `context.topic` 기반 Google News RSS(최근 7일) 상위 8개 소스 자동 수집 및 인용 글 초안 생성. 결과 구조: `{"title": "...", "paragraphs": [...], "sources": [...]}` 또는 자료 부족 시 `{"skip": true}`. |
+| `ui.render` | `messages`·이미지 참조 → 도구를 사용하는 AI Agent → `{reply,imageFileId}` 응답. |
 | `portfolio.search` 등 RAG | **공통 RAG 연동**: 사용자 질의 수신 → 뇌대리 검색 API의 Google Gemini 임베딩(`models/gemini-embedding-001`, 768차원) + PostgreSQL 문서 벡터 검색(동적 컬렉션: `portfolio`, `document` 등) → 작업별 문맥 결합 및 지침(`instruction`) 합성 → Raya 난이도 평가(L1/L2/L3) → n8n 모델 호출 → 결과 반환. |
 | 나머지 3종 | 문서·코드·일반 질답 지침과 결과 계약은 후속으로 제공한다. 기존 기능의 지침을 자동 복제하지 않는다. |
 

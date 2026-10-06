@@ -27,7 +27,7 @@
         360
       ],
       "parameters": {
-        "jsCode": "const raw = $input.first()?.json || {};\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\n\nconst requestId = body.request_id || raw.request_id || 'req-' + Date.now();\nconst taskType = body.task_type || raw.task_type || 'chat.general';\nconst prompt = body.prompt || raw.prompt || '';\nconst project = body.project || raw.project || 'default';\nconst environment = body.environment || raw.environment || 'production';\nconst collection = body.collection || raw.collection || (body.input && body.input.collection) || '';\n\nreturn [{\n  json: {\n    request_id: requestId,\n    task_type: taskType,\n    prompt: prompt,\n    project: project,\n    environment: environment,\n    collection: collection,\n    ...(body.input || {}),\n    ...body\n  }\n}];"
+        "jsCode": "const raw = $input.first()?.json || {};\nconst body = raw.body && typeof raw.body === 'object' ? raw.body : raw;\n\nconst requestId = body.request_id || body.requestId || raw.request_id || raw.requestId || 'req-' + Date.now();\nlet taskType = body.task_type || raw.task_type;\n\nif (!taskType) {\n  if (body.context?.comment || body.context?.targetComment || body.context?.thread || body.context?.recentResponses) {\n    taskType = 'comment.generate';\n  } else if (body.context?.topic || body.topic) {\n    taskType = 'article.draft';\n  } else if (body.context?.tags) {\n    taskType = 'blog.tags';\n  } else if (body.context?.content && (body.context?.title || body.context?.postId)) {\n    taskType = 'blog.summary';\n  } else {\n    taskType = 'chat.general';\n  }\n}\n\nconst prompt = body.prompt || raw.prompt || '';\nconst project = body.project || raw.project || 'default';\nconst environment = body.environment || raw.environment || 'production';\nconst collection = body.collection || raw.collection || (body.input && body.input.collection) || '';\n\nreturn [{\n  json: {\n    request_id: requestId,\n    task_type: taskType,\n    prompt: prompt,\n    project: project,\n    environment: environment,\n    collection: collection,\n    system: body.system || raw.system || '',\n    context: body.context || raw.context || null,\n    hash: body.hash || raw.hash || '',\n    ...(body.input || {}),\n    ...body\n  }\n}];"
       },
       "notes": "웹훅으로 유입된 AI 요청을 표준 필드(request_id, task_type, prompt 등)로 정규화합니다.",
       "notesInFlow": true
@@ -252,6 +252,29 @@
               },
               "renameOutput": true,
               "outputKey": "일반 질답"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "id": "3a6ceee2-7c90-49af-8d73-1da83cb492fd",
+                    "leftValue": "={{ $json.task_type }}",
+                    "rightValue": "article.draft",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "실험실 글 초안"
             }
           ]
         },
@@ -262,78 +285,32 @@
     },
     {
       "id": "b2dc7760-e44a-55a9-9d25-cfb42617b881",
-      "name": "블로그 태그 · 지침 대기",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "name": "블로그 태그 지침 합성",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         160,
         0
       ],
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
-              "name": "task_name",
-              "value": "블로그 태그",
-              "type": "string"
-            },
-            {
-              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
-              "name": "instruction",
-              "value": "",
-              "type": "string"
-            },
-            {
-              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
-              "name": "status",
-              "value": "awaiting_instructions",
-              "type": "string"
-            }
-          ]
-        },
-        "includeOtherFields": true,
-        "options": {}
+        "jsCode": "const item = $json;\nconst context = item.context || item.prompt || {};\nconst contextStr = typeof context === 'string' ? context : JSON.stringify(context);\nconst instruction = \"현재 작업은 본문 주제를 나타내는 태그만 tags 배열로 고르는 것이다. 한국어를 기본으로 하되 제품명과 기술 고유명사는 원래 표기를 유지한다. 댓글, 감상, 요약 문장을 쓰지 않는다. 태그 1~8개, 각 30자 이내. 결과는 반드시 {\\\"tags\\\": [\\\"태그1\\\", \\\"태그2\\\"]} 형태의 JSON 객체로 반환한다.\";\nconst prompt = \"참고 자료 JSON:\\n\" + contextStr + \"\\n\\n현재 작업 지시: \" + instruction;\n\nreturn [{\n  json: {\n    ...item,\n    task_name: '블로그 태그',\n    instruction: instruction,\n    prompt: prompt,\n    requirements: {\n      ...(item.requirements || {}),\n      structured_output: true\n    },\n    status: 'ready'\n  }\n}];"
       },
-      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notes": "블로그 본문 주제를 대표하는 1~8개 태그 생성 지침을 합성합니다.",
       "notesInFlow": true
     },
     {
       "id": "a884c905-b52b-55a1-94f0-db4a1cbc9154",
-      "name": "블로그 요약 · 지침 대기",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "name": "블로그 요약 지침 합성",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         160,
         160
       ],
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
-              "name": "task_name",
-              "value": "블로그 요약",
-              "type": "string"
-            },
-            {
-              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
-              "name": "instruction",
-              "value": "",
-              "type": "string"
-            },
-            {
-              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
-              "name": "status",
-              "value": "awaiting_instructions",
-              "type": "string"
-            }
-          ]
-        },
-        "includeOtherFields": true,
-        "options": {}
+        "jsCode": "const item = $json;\nconst context = item.context || item.prompt || {};\nconst contextStr = typeof context === 'string' ? context : JSON.stringify(context);\nconst instruction = \"현재 작업은 게시글 요약이다. 댓글이나 대화를 작성하는 작업이 아니다. 제공된 본문의 핵심 내용을 독자가 바로 파악하도록 2~4문장으로 압축해 summary 필드에 넣는다. 캐릭터의 자연스러운 해체 반말을 유지한다. 문장을 '~한다', '~이다', '~된다' 같은 기사·보고서체로 끝내지 않는다. 루미가 원래 알고 있던 내용을 설명하듯 단정하기보다, 방금 읽은 게시글의 내용을 가까운 사람에게 전해주듯 자연스럽게 요약한다. 전달하는 느낌은 유지하되 '~대', '~래', '~라고 해' 같은 전달형 종결어미를 반복하지 않는다. 같은 종결어미를 연속해서 사용하지 말고 '~해', '~있어', '~다뤄', '~해줘', '~내용이야' 같은 자연스러운 반말과 섞는다. 전달하는 느낌을 내기 위해 모든 문장을 '~대'나 '~래'로 끝낼 필요는 없다. 본문에 없는 사실은 넣지 않는다. 500자 이내. 결과는 반드시 {\\\"summary\\\": \\\"요약 내용\\\"} 형태의 JSON 객체로 반환한다. 올바른 예: 이 글은 도커 배포 설정을 다뤄. 환경별로 설정 파일을 나누는 방법과 배포할 때 조심할 점을 설명한대. 설정을 어떻게 나누면 되는지도 예시로 보여줘.\";\nconst prompt = \"참고 자료 JSON:\\n\" + contextStr + \"\\n\\n현재 작업 지시: \" + instruction;\n\nreturn [{\n  json: {\n    ...item,\n    task_name: '블로그 요약',\n    instruction: instruction,\n    prompt: prompt,\n    requirements: {\n      ...(item.requirements || {}),\n      structured_output: true\n    },\n    status: 'ready'\n  }\n}];"
       },
-      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notes": "게시글 핵심을 2~4문장으로 압축하는 자연스러운 반말 요약 지침을 합성합니다.",
       "notesInFlow": true
     },
     {
@@ -426,40 +403,17 @@
     },
     {
       "id": "efd558c3-3b67-5af7-9d35-a74c43314973",
-      "name": "댓글 생성 · 지침 대기",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "name": "댓글 생성 지침 합성",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         160,
         640
       ],
       "parameters": {
-        "assignments": {
-          "assignments": [
-            {
-              "id": "a3f84ab0-73c0-5441-9341-89063fee12ec",
-              "name": "task_name",
-              "value": "댓글 생성",
-              "type": "string"
-            },
-            {
-              "id": "052c06b6-a840-5c25-91c8-8551dd351a25",
-              "name": "instruction",
-              "value": "",
-              "type": "string"
-            },
-            {
-              "id": "758d90dd-0177-5b89-b399-ed3b02e9f146",
-              "name": "status",
-              "value": "awaiting_instructions",
-              "type": "string"
-            }
-          ]
-        },
-        "includeOtherFields": true,
-        "options": {}
+        "jsCode": "const item = $json;\nconst context = item.context || item.prompt || {};\nconst contextStr = typeof context === 'string' ? context : JSON.stringify(context);\nconst instruction = \"현재 작업은 target 댓글에 대한 답글이다. directMention이면 인사에도 자연스럽게 답한다. 캐릭터의 성격과 말투를 적용한다. 일상적인 댓글은 보통 1~3문장으로 짧게 답하고 필요한 경우만 더 설명한다. 감정에 맞는 이모지 사용은 말투 설정을 따른다. 실제 memory와 thread에 없는 이전 대화나 자신의 경험을 만들지 않는다. 예를 들어 나도 파일을 날려봤다는 식의 허구 경험으로 공감하지 않는다. 제공된 사실로만 반응한다. 이름을 매번 부르거나 상담하듯 칭찬과 질문을 늘어놓지 않는다. recentResponses는 표현 반복 방지용이다. 결과는 반드시 {\\\"comment\\\": \\\"답글 내용\\\"} 형태의 JSON 객체로 반환한다.\";\nconst prompt = \"참고 자료 JSON:\\n\" + contextStr + \"\\n\\n현재 작업 지시: \" + instruction;\n\nreturn [{\n  json: {\n    ...item,\n    task_name: '댓글 생성',\n    instruction: instruction,\n    prompt: prompt,\n    requirements: {\n      ...(item.requirements || {}),\n      structured_output: true\n    },\n    status: 'ready'\n  }\n}];"
       },
-      "notes": "instruction 칸에 추후 전달받은 작업 지침을 입력합니다. 아직 AI를 호출하지 않습니다.",
+      "notes": "target 댓글, thread, memory 문맥을 바탕으로 자연스러운 답글을 생성하는 지침을 합성합니다.",
       "notesInFlow": true
     },
     {
@@ -583,7 +537,7 @@
       "typeVersion": 3.4,
       "position": [
         160,
-        1280
+        1440
       ],
       "parameters": {
         "assignments": {
@@ -797,7 +751,10 @@
       "parameters": {
         "promptType": "define",
         "text": "={{ $json.instruction ? $json.instruction + \"\\n\\n\" + $json.prompt : $json.prompt }}",
-        "options": {}
+        "options": {
+          "systemMessage": "={{ $json.system || '' }}",
+          "maxIterations": 3
+        }
       },
       "notes": "L1 등급 작업을 OpenRouter Free 모델로 실행합니다.",
       "notesInFlow": true,
@@ -835,7 +792,10 @@
       "parameters": {
         "promptType": "define",
         "text": "={{ $json.instruction ? $json.instruction + \"\\n\\n\" + $json.prompt : $json.prompt }}",
-        "options": {}
+        "options": {
+          "systemMessage": "={{ $json.system || '' }}",
+          "maxIterations": 3
+        }
       },
       "notes": "L2 등급 작업을 Groq Free 모델로 실행합니다.",
       "notesInFlow": true,
@@ -873,7 +833,10 @@
       "parameters": {
         "promptType": "define",
         "text": "={{ $json.instruction ? $json.instruction + \"\\n\\n\" + $json.prompt : $json.prompt }}",
-        "options": {}
+        "options": {
+          "systemMessage": "={{ $json.system || '' }}",
+          "maxIterations": 3
+        }
       },
       "notes": "L3 등급 작업을 Google AI Studio Gemini Free 모델로 실행합니다.",
       "notesInFlow": true,
@@ -1060,7 +1023,10 @@
       "parameters": {
         "promptType": "define",
         "text": "={{ $json.instruction ? $json.instruction + \"\\n\\n\" + $json.prompt : $json.prompt }}",
-        "options": {}
+        "options": {
+          "systemMessage": "={{ $json.system || '' }}",
+          "maxIterations": 3
+        }
       },
       "notes": "L1 소진 시 Mistral 직접 API 무료 모델로 폴백 실행합니다.",
       "notesInFlow": true,
@@ -1096,7 +1062,7 @@
         560
       ],
       "parameters": {
-        "jsCode": "return $input.all().map((item, index) => {\n  let req = {};\n  try { req = $('요청 정규화').first()?.json || {}; } catch(e) {}\n  if (!req.task_type) { try { req = $('샘플 요청 8종 + 미등록').first()?.json || {}; } catch(e) {} }\n  \n  let raya = {};\n  try { raya = $('Raya 난이도 판단').first()?.json || {}; } catch(e) {}\n  \n  let rag = {};\n  try { rag = $('공통 컨텍스트 및 지침 합성').first()?.json || {}; } catch(e) {}\n  \n  if (item.json.status === 'failed' && item.json.error_code) {\n    return {\n      json: {\n        request_id: req.request_id || item.json.request_id || 'req-' + Date.now(),\n        task_type: req.task_type || item.json.task_type || 'chat.general',\n        project: req.project || item.json.project || 'default',\n        environment: req.environment || item.json.environment || 'production',\n        status: 'failed',\n        error_code: item.json.error_code,\n        error_message: item.json.error_message,\n        ai_result: item.json.ai_result || null,\n        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n      },\n      pairedItem: { item: index }\n    };\n  }\n\n  const text = item.json.output || item.json.text || (typeof item.json === 'string' ? item.json : JSON.stringify(item.json));\n  \n  let tier = item.json.actual_tier;\n  if (!tier) {\n    try {\n      if ($('폴백 · Mistral Agent').isExecuted) tier = 'mistral';\n      else if ($('L1 · OpenRouter Agent').isExecuted) tier = 'L1';\n      else if ($('L2 · Groq Agent').isExecuted) tier = 'L2';\n      else if ($('L3 · Gemini Agent').isExecuted) tier = 'L3';\n    } catch (e) {}\n  }\n  if (!tier) {\n    tier = raya.model_tier || raya.routing?.model_tier || 'L1';\n  }\n  \n  const providerMap = {\n    L1: { provider: 'openrouter', model: 'openrouter/free' },\n    L2: { provider: 'groq', model: 'openai/gpt-oss-120b' },\n    L3: { provider: 'google', model: 'models/gemini-3.8-flash' },\n    mistral: { provider: 'mistral', model: 'ministral-8b-latest' }\n  };\n  const providerInfo = providerMap[tier] || { provider: 'unknown', model: 'unknown' };\n  \n  const promptText = req.prompt || '';\n  const promptTokens = Math.max(1, Math.ceil(promptText.length / 4));\n  const completionTokens = Math.max(1, Math.ceil((text?.length || 0) / 4));\n  \n  return {\n    json: {\n      request_id: req.request_id || item.json.request_id || 'req-' + Date.now(),\n      task_type: req.task_type || item.json.task_type || 'chat.general',\n      project: req.project || item.json.project || 'default',\n      environment: req.environment || item.json.environment || 'production',\n      status: 'completed',\n      ai_result: text,\n      provider: providerInfo.provider,\n      model: providerInfo.model,\n      model_tier: tier,\n      fallback_chain: item.json.fallback_chain || (item.json.fallback_from ? [item.json.fallback_from, tier] : null),\n      usage: {\n        prompt_tokens: promptTokens,\n        completion_tokens: completionTokens,\n        total_tokens: promptTokens + completionTokens\n      },\n      routing: raya.routing || null,\n      retrieved_context: rag.retrieved_context || null\n    },\n    pairedItem: { item: index },\n  };\n});"
+        "jsCode": "return $input.all().map((item, index) => {\n  let req = {};\n  try { req = $('요청 정규화').first()?.json || {}; } catch(e) {}\n  if (!req.task_type) { try { req = $('샘플 요청 8종 + 미등록').first()?.json || {}; } catch(e) {} }\n  \n  let raya = {};\n  try { raya = $('Raya 난이도 판단').first()?.json || {}; } catch(e) {}\n  \n  let rag = {};\n  try { rag = $('공통 컨텍스트 및 지침 합성').first()?.json || {}; } catch(e) {}\n  \n  if (item.json.status === 'failed' && item.json.error_code) {\n    return {\n      json: {\n        request_id: req.request_id || item.json.request_id || 'req-' + Date.now(),\n        task_type: req.task_type || item.json.task_type || 'chat.general',\n        project: req.project || item.json.project || 'default',\n        environment: req.environment || item.json.environment || 'production',\n        status: 'failed',\n        error_code: item.json.error_code,\n        error_message: item.json.error_message,\n        ai_result: item.json.ai_result || null,\n        result: null,\n        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }\n      },\n      pairedItem: { item: index }\n    };\n  }\n\n  const rawText = item.json.output || item.json.text || (typeof item.json === 'string' ? item.json : JSON.stringify(item.json));\n  const text = typeof rawText === 'string' ? rawText : JSON.stringify(rawText);\n  \n  let parsedResult = null;\n  if (text) {\n    try {\n      const cleaned = text.trim().replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\n      parsedResult = JSON.parse(cleaned);\n    } catch (e) {}\n  }\n\n  let tier = item.json.actual_tier;\n  if (!tier) {\n    try {\n      if ($('L3 · Groq Agent').isExecuted || $('L3 · Gemini Agent').isExecuted) tier = 'L3';\n      else if ($('L2 · Gemini Agent').isExecuted || $('L2 · Groq Agent').isExecuted) tier = 'L2';\n      else if ($('L1 · OpenRouter Agent').isExecuted) tier = 'L1';\n      else if ($('폴백 · Mistral Agent').isExecuted) tier = 'mistral';\n    } catch (e) {}\n  }\n  if (!tier) {\n    tier = raya.model_tier || raya.routing?.model_tier || 'L1';\n  }\n  \n  // L2 is Gemini, L3 is Groq as adjusted by user\n  const providerMap = {\n    L1: { provider: 'openrouter', model: 'openrouter/free' },\n    L2: { provider: 'google', model: 'models/gemini-3.5-flash-lite' },\n    L3: { provider: 'groq', model: 'openai/gpt-oss-120b' },\n    mistral: { provider: 'mistral', model: 'ministral-8b-latest' }\n  };\n  const providerInfo = providerMap[tier] || { provider: 'unknown', model: 'unknown' };\n  \n  const promptText = req.prompt || '';\n  const promptTokens = Math.max(1, Math.ceil(promptText.length / 4));\n  const completionTokens = Math.max(1, Math.ceil((text?.length || 0) / 4));\n  \n  return {\n    json: {\n      request_id: req.request_id || item.json.request_id || 'req-' + Date.now(),\n      task_type: req.task_type || item.json.task_type || 'chat.general',\n      project: req.project || item.json.project || 'default',\n      environment: req.environment || item.json.environment || 'production',\n      status: 'completed',\n      ai_result: text,\n      result: parsedResult || (text ? { output: text } : null),\n      provider: providerInfo.provider,\n      model: providerInfo.model,\n      model_tier: tier,\n      fallback_chain: item.json.fallback_chain || (item.json.fallback_from ? [item.json.fallback_from, tier] : null),\n      usage: {\n        prompt_tokens: promptTokens,\n        completion_tokens: completionTokens,\n        total_tokens: promptTokens + completionTokens\n      },\n      routing: raya.routing || null,\n      retrieved_context: rag.retrieved_context || null\n    },\n    pairedItem: { item: index },\n  };\n});"
       },
       "notes": "각 AI Agent의 실행 결과를 취합하여 표준 형식으로 정리합니다.",
       "notesInFlow": true
@@ -1160,6 +1126,38 @@
       },
       "notes": "L1 OpenRouter 실패 시 원본 문맥을 유지하며 폴백 Mistral 에이전트로 전환합니다.",
       "notesInFlow": true
+    },
+    {
+      "id": "80f2fb1e-8c55-56ca-bea1-9a60b9a6fef4",
+      "name": "실험실 글 소스 수집",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        1280
+      ],
+      "onError": "continueErrorOutput",
+      "parameters": {
+        "url": "={{ 'https://news.google.com/rss/search?hl=ko&gl=KR&ceid=KR:ko&q=' + encodeURIComponent(($json.context?.topic || $json.topic || $json.prompt || '최신 기술 트렌드') + ' when:7d') }}",
+        "options": {}
+      },
+      "notes": "주제와 관련된 최근 7일 뉴스 소스를 Google News RSS에서 수집합니다.",
+      "notesInFlow": true
+    },
+    {
+      "id": "d996f4a7-fb00-5941-bcee-64d2d9e1f2a6",
+      "name": "실험실 글 초안 지침 합성",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        1280
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\nlet req = {};\ntry { req = $('작업 종류 분기').first()?.json || $('요청 정규화').first()?.json || {}; } catch(e) {}\n\nlet sources = [];\nif (Array.isArray(req.context?.sources) && req.context.sources.length > 0) {\n  sources = req.context.sources;\n} else if (Array.isArray(req.sources) && req.sources.length > 0) {\n  sources = req.sources;\n} else {\n  sources = items.slice(0, 8).map(({ json: s }) => ({\n    title: s.title || '',\n    url: s.link || s.url || '',\n    date: s.isoDate || s.pubDate || '',\n    excerpt: String(s.contentSnippet || s.content || s.snippet || '').slice(0, 500)\n  })).filter(s => typeof s.url === 'string' && s.url.startsWith('https://'));\n}\n\nconst instruction = \"현재 작업은 제공된 sources를 근거로 블로그 글 초안을 작성하는 것이다. 댓글을 쓰거나 독자에게 작업을 되묻지 않는다. title, paragraphs, sources를 채운다. 자료가 부족하면 {\\\"skip\\\": true}로 끝낸다. 제공된 sources의 URL만 인용한다. 결과는 반드시 {\\\"title\\\": \\\"제목\\\", \\\"paragraphs\\\": [\\\"문단1\\\", \\\"문단2\\\", \\\"문단3\\\"], \\\"sources\\\": [{\\\"title\\\": \\\"출처명\\\", \\\"url\\\": \\\"https://...\\\"}]} 또는 {\\\"skip\\\": true} 형태의 JSON 객체로 반환한다.\";\nconst prompt = \"참고 자료 JSON:\\n\" + JSON.stringify({ sources, topic: req.context?.topic || req.topic || req.prompt || '' }) + \"\\n\\n현재 작업 지시: \" + instruction;\n\nreturn [{\n  json: {\n    ...req,\n    task_name: '실험실 글 초안',\n    instruction: instruction,\n    prompt: prompt,\n    requirements: {\n      ...(req.requirements || {}),\n      structured_output: true\n    },\n    status: 'ready'\n  }\n}];"
+      },
+      "notes": "수집된 sources를 바탕으로 블로그 글 초안 작성 지침을 합성합니다.",
+      "notesInFlow": true
     }
   ],
   "connections": {
@@ -1207,28 +1205,6 @@
         ]
       ]
     },
-    "블로그 태그 · 지침 대기": {
-      "main": [
-        [
-          {
-            "node": "Raya 요청 준비",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "블로그 요약 · 지침 대기": {
-      "main": [
-        [
-          {
-            "node": "Raya 요청 준비",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "공통 벡터 검색": {
       "main": [
         [
@@ -1252,17 +1228,6 @@
       ]
     },
     "UI 빌더 화면 생성 · 지침 대기": {
-      "main": [
-        [
-          {
-            "node": "Raya 요청 준비",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "댓글 생성 · 지침 대기": {
       "main": [
         [
           {
@@ -1310,14 +1275,14 @@
       "main": [
         [
           {
-            "node": "블로그 태그 · 지침 대기",
+            "node": "블로그 태그 지침 합성",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "블로그 요약 · 지침 대기",
+            "node": "블로그 요약 지침 합성",
             "type": "main",
             "index": 0
           }
@@ -1338,7 +1303,7 @@
         ],
         [
           {
-            "node": "댓글 생성 · 지침 대기",
+            "node": "댓글 생성 지침 합성",
             "type": "main",
             "index": 0
           }
@@ -1360,6 +1325,13 @@
         [
           {
             "node": "일반 질답 · 지침 대기",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "실험실 글 소스 수집",
             "type": "main",
             "index": 0
           }
@@ -1635,6 +1607,61 @@
         [
           {
             "node": "AI 결과 정리",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "블로그 태그 지침 합성": {
+      "main": [
+        [
+          {
+            "node": "Raya 요청 준비",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "블로그 요약 지침 합성": {
+      "main": [
+        [
+          {
+            "node": "Raya 요청 준비",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "댓글 생성 지침 합성": {
+      "main": [
+        [
+          {
+            "node": "Raya 요청 준비",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "실험실 글 소스 수집": {
+      "main": [
+        [
+          {
+            "node": "실험실 글 초안 지침 합성",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "실험실 글 초안 지침 합성": {
+      "main": [
+        [
+          {
+            "node": "Raya 요청 준비",
             "type": "main",
             "index": 0
           }
