@@ -1,4 +1,5 @@
 import asyncio
+import json
 import secrets
 from datetime import datetime
 from typing import Any
@@ -10,6 +11,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field
 
 from .auth import Auth
+from .compute import Compute, compute_context, guard_key
 from .config import Settings
 from .db import Database
 from .integration import PLATFORM_OWNER
@@ -47,6 +49,8 @@ PUBLIC_AI_JOB_FIELDS = (
     "project",
     "environment",
     "status",
+    "stage",
+    "cancel_requested",
     "result",
     "error_code",
     "error_message",
@@ -73,6 +77,8 @@ def _serialize_job(job: dict) -> dict:
 async def run_n8n_workflow(settings: Settings, data: AiJobCreate) -> dict:
     if not settings.n8n_ai_webhook_url:
         raise HTTPException(503, "n8n_ai_webhook_not_configured")
+    if not settings.n8n_compute_context_ready:
+        raise HTTPException(503, "n8n_compute_context_not_ready")
 
     payload = {
         "request_id": data.request_id,
@@ -82,20 +88,33 @@ async def run_n8n_workflow(settings: Settings, data: AiJobCreate) -> dict:
         "environment": data.environment,
         "input": data.input,
     }
+    lease = compute_context.get()
+    if lease:
+        # Workflow HTTP nodes forward this short-lived token only to internal compute APIs.
+        # It is not a model input, permanent API key, or workflow return value.
+        payload["compute_context"] = {
+            "token": lease.token,
+            "header": "X-Noedaeri-Compute-Token",
+        }
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(settings.n8n_ai_webhook_url, json=payload)
     except httpx.TimeoutException:
         raise HTTPException(504, "ai_execution_timeout") from None
-    except httpx.RequestError as exc:
-        raise HTTPException(502, f"n8n_network_error: {str(exc)[:100]}") from None
+    except httpx.RequestError:
+        raise HTTPException(502, "n8n_network_error") from None
 
     if response.status_code != 200:
         raise HTTPException(502, f"n8n_execution_failed: status {response.status_code}")
 
     try:
-        return response.json()
+        result = response.json()
+        if not isinstance(result, dict):
+            raise ValueError()
+        if lease and lease.token in json.dumps(result):
+            raise ValueError()
+        return result
     except Exception:
         raise HTTPException(502, "n8n_invalid_json_response") from None
 
@@ -144,122 +163,163 @@ async def execute_or_reuse_ai_job(
     db: Database, settings: Settings, owner_id: UUID, data: AiJobCreate
 ) -> dict:
     with db.connect() as conn:
-        existing = conn.execute(
-            """
-            SELECT * FROM ai_jobs
-            WHERE owner_id=%s AND project=%s AND environment=%s AND request_id=%s
-            """,
-            (owner_id, data.project, data.environment, data.request_id),
+        job = conn.execute(
+            "INSERT INTO ai_jobs(id,owner_id,project,environment,request_id,task_type,prompt,input,"
+            "status) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending') "
+            "ON CONFLICT(owner_id,project,environment,request_id) DO NOTHING RETURNING *",
+            (
+                uuid4(),
+                owner_id,
+                data.project,
+                data.environment,
+                data.request_id,
+                data.task_type,
+                data.prompt,
+                Jsonb(data.input),
+            ),
         ).fetchone()
-
-        if existing:
-            if existing["status"] == "succeeded":
-                res = _serialize_job(existing)
-                res["reused"] = True
-                return res
-            if existing["status"] == "running":
-                if not data.sync:
-                    res = _serialize_job(existing)
-                    res["reused"] = True
-                    return res
-                # If sync, poll for completion
-                job_id = existing["id"]
-            else:
-                job_id = existing["id"]
-        else:
-            job_id = uuid4()
-            conn.execute(
-                """
-                INSERT INTO ai_jobs (
-                    id, owner_id, project, environment, request_id, task_type,
-                    prompt, input, status
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'running')
-                """,
-                (
-                    job_id,
-                    owner_id,
-                    data.project,
-                    data.environment,
-                    data.request_id,
-                    data.task_type,
-                    data.prompt,
-                    Jsonb(data.input),
-                ),
-            )
-
-    if existing and existing["status"] == "running" and data.sync:
-        for _ in range(120):
-            await asyncio.sleep(0.5)
-            with db.connect() as conn:
-                polled = conn.execute("SELECT * FROM ai_jobs WHERE id=%s", (job_id,)).fetchone()
-                if polled and polled["status"] in ("succeeded", "failed", "cancelled"):
-                    res = _serialize_job(polled)
-                    res["reused"] = True
-                    return res
-        raise HTTPException(504, "ai_execution_timeout")
-
-    if not data.sync:
-        asyncio.create_task(_async_worker(db, settings, owner_id, job_id, data))
+        reused = job is None
+        if reused:
+            job = conn.execute(
+                "SELECT * FROM ai_jobs WHERE owner_id=%s AND project=%s AND environment=%s "
+                "AND request_id=%s",
+                (owner_id, data.project, data.environment, data.request_id),
+            ).fetchone()
+            if (job["task_type"], job["prompt"], job["input"]) != (
+                data.task_type,
+                data.prompt,
+                data.input,
+            ):
+                raise HTTPException(409, "ai_request_id_conflict")
+    if not data.sync or job["status"] not in {"pending", "running"}:
+        return dict(_serialize_job(job), reused=reused)
+    if job["status"] == "pending":
+        result = await _run_and_save(db, settings, owner_id, job["id"], data)
+        if result:
+            return dict(result, reused=reused)
+    # Another dispatcher owns execution. Waiting here never submits a second workflow.
+    deadline = asyncio.get_running_loop().time() + settings.native_wait + 65
+    while asyncio.get_running_loop().time() < deadline:
         with db.connect() as conn:
-            job = conn.execute("SELECT * FROM ai_jobs WHERE id=%s", (job_id,)).fetchone()
-            res = _serialize_job(job)
-            res["reused"] = False
-            return res
-
-    return await _run_and_save(db, settings, owner_id, job_id, data)
+            job = conn.execute("SELECT * FROM ai_jobs WHERE id=%s", (job["id"],)).fetchone()
+        if job["status"] not in {"pending", "running"}:
+            return dict(_serialize_job(job), reused=True)
+        await asyncio.sleep(0.1)
+    raise HTTPException(504, "ai_execution_timeout")
 
 
 async def _run_and_save(
     db: Database, settings: Settings, owner_id: UUID, job_id: UUID, data: AiJobCreate
 ) -> dict:
-    try:
-        n8n_result = await run_n8n_workflow(settings, data)
+    with db.connect() as ownership:
+        claimed = ownership.execute(
+            "SELECT pg_try_advisory_lock(%s) AS ok", (guard_key(f"ai:{job_id}"),)
+        ).fetchone()["ok"]
+        ownership.commit()
+        if not claimed:
+            return None
+        orphan = ownership.execute(
+            "UPDATE ai_jobs SET status='failed',error_code='execution_unconfirmed',"
+            "error_message='execution_unconfirmed',finished_at=now(),updated_at=now() "
+            "WHERE id=%s AND status='running' RETURNING *",
+            (job_id,),
+        ).fetchone()
+        ownership.commit()
+        if orphan:
+            # Reconcile history after restart, but never repeat an unknown external request.
+            return _serialize_job(orphan)
+        return await _execute_ai_job(db, settings, owner_id, job_id, data)
+
+
+async def _execute_ai_job(db, settings, owner_id, job_id, data):
+    with db.connect() as conn:
+        claimed = conn.execute(
+            "UPDATE ai_jobs SET status='running',stage='waiting_compute',updated_at=now() "
+            "WHERE id=%s AND status='pending' RETURNING id",
+            (job_id,),
+        ).fetchone()
+    if not claimed:
+        return None
+
+    def runnable():
         with db.connect() as conn:
-            conn.execute(
-                """
-                UPDATE ai_jobs
-                SET status='succeeded', result=%s, finished_at=now(), updated_at=now()
-                WHERE id=%s
-                """,
-                (Jsonb(n8n_result), job_id),
+            return bool(
+                conn.execute(
+                    "SELECT 1 FROM ai_jobs WHERE id=%s AND status='running' "
+                    "AND NOT cancel_requested AND EXISTS (SELECT 1 FROM users "
+                    "WHERE id=ai_jobs.owner_id AND status='approved')",
+                    (job_id,),
+                ).fetchone()
             )
 
-            usage = n8n_result.get("usage") or {}
-            prompt_tokens = usage.get("prompt_tokens") or 0
-            completion_tokens = usage.get("completion_tokens") or 0
-            total_tokens = usage.get("total_tokens") or (prompt_tokens + completion_tokens)
-            provider = n8n_result.get("provider") or "unknown"
-            model = n8n_result.get("model") or "unknown"
-            tier = n8n_result.get("model_tier")
+    try:
+        async with Compute(db, settings.storage_root).slot(
+            "ai",
+            job_id,
+            "ai.workflow",
+            owner_id,
+            settings.native_wait,
+            alive=runnable,
+        ):
+            with db.connect() as conn:
+                conn.execute("UPDATE ai_jobs SET stage='executing' WHERE id=%s", (job_id,))
+            n8n_result = await run_n8n_workflow(settings, data)
+            with db.connect() as conn:
+                conn.execute(
+                    """
+                    UPDATE ai_jobs
+                    SET status=CASE WHEN cancel_requested THEN 'cancelled' ELSE 'succeeded' END,
+                        result=CASE WHEN cancel_requested THEN NULL ELSE %s END,
+                        stage='finished', finished_at=now(), updated_at=now(),
+                        expires_at=now()+make_interval(secs=>%s)
+                    WHERE id=%s AND status='running'
+                    """,
+                    (
+                        Jsonb(n8n_result),
+                        settings.platform_result_ttl
+                        if owner_id == PLATFORM_OWNER
+                        else settings.result_ttl,
+                        job_id,
+                    ),
+                )
 
-            record_usage(
-                conn,
-                owner_id=owner_id,
-                project=data.project,
-                environment=data.environment,
-                request_id=data.request_id,
-                task_type=data.task_type,
-                provider=provider,
-                model=model,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                model_tier=tier,
-                job_id=job_id,
-            )
+                usage = n8n_result.get("usage") or {}
+                prompt_tokens = usage.get("prompt_tokens") or 0
+                completion_tokens = usage.get("completion_tokens") or 0
+                total_tokens = usage.get("total_tokens") or (prompt_tokens + completion_tokens)
+                provider = n8n_result.get("provider") or "unknown"
+                model = n8n_result.get("model") or "unknown"
+                tier = n8n_result.get("model_tier")
 
-            job = conn.execute("SELECT * FROM ai_jobs WHERE id=%s", (job_id,)).fetchone()
-            res = _serialize_job(job)
-            res["reused"] = False
-            return res
+                record_usage(
+                    conn,
+                    owner_id=owner_id,
+                    project=data.project,
+                    environment=data.environment,
+                    request_id=data.request_id,
+                    task_type=data.task_type,
+                    provider=provider,
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    model_tier=tier,
+                    job_id=job_id,
+                )
+
+                job = conn.execute("SELECT * FROM ai_jobs WHERE id=%s", (job_id,)).fetchone()
+                res = _serialize_job(job)
+                res["reused"] = False
+                return res
     except HTTPException as e:
         with db.connect() as conn:
             conn.execute(
                 """
                 UPDATE ai_jobs
-                SET status='failed', error_code=%s, error_message=%s,
+                SET status=CASE WHEN cancel_requested THEN 'cancelled' ELSE 'failed' END,
+                    error_code=%s, error_message=%s,
                     finished_at=now(), updated_at=now()
-                WHERE id=%s
+                WHERE id=%s AND status='running'
                 """,
                 (f"http_{e.status_code}", str(e.detail), job_id),
             )
@@ -271,20 +331,32 @@ async def _run_and_save(
                 UPDATE ai_jobs
                 SET status='failed', error_code='internal_error', error_message=%s,
                     finished_at=now(), updated_at=now()
-                WHERE id=%s
+                WHERE id=%s AND status='running' AND NOT cancel_requested
                 """,
-                (str(exc)[:200], job_id),
+                ("ai_internal_execution_error", job_id),
             )
         raise HTTPException(500, "ai_internal_execution_error") from exc
 
 
-async def _async_worker(
-    db: Database, settings: Settings, owner_id: UUID, job_id: UUID, data: AiJobCreate
-):
-    try:
-        await _run_and_save(db, settings, owner_id, job_id, data)
-    except Exception:
-        pass
+async def process_ai_queue(db, settings):
+    with db.connect() as conn:
+        jobs = conn.execute(
+            "SELECT * FROM ai_jobs WHERE status IN ('pending','running') "
+            "ORDER BY created_at LIMIT 20"
+        ).fetchall()
+    for job in jobs:
+        data = AiJobCreate(
+            request_id=job["request_id"],
+            task_type=job["task_type"],
+            prompt=job["prompt"],
+            project=job["project"],
+            environment=job["environment"],
+            input=job["input"],
+        )
+        try:
+            await _run_and_save(db, settings, job["owner_id"], job["id"], data)
+        except HTTPException:
+            pass
 
 
 def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Settings):
@@ -366,8 +438,11 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
             row = conn.execute(
                 """
                 UPDATE ai_jobs
-                SET status='cancelled', updated_at=now(), finished_at=now()
-                WHERE id=%s AND (%s OR owner_id=%s) AND status='running'
+                SET cancel_requested=true,
+                    status=CASE WHEN status='pending' THEN 'cancelled' ELSE status END,
+                    updated_at=now(),
+                    finished_at=CASE WHEN status='pending' THEN now() ELSE finished_at END
+                WHERE id=%s AND (%s OR owner_id=%s) AND status IN ('pending','running')
                 RETURNING id
                 """,
                 (job_id, is_admin, owner_id),

@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 
+from .compute import Compute, parent_context
 from .integration import PLATFORM_OWNER
 from .services import AI_TASK_TYPES, SERVICES
 
@@ -31,6 +32,11 @@ def tracked_operation(db, settings, auth, principal, kind, title):
                 owner_id = PLATFORM_OWNER
             else:
                 owner_id = principal(request)["id"]
+            parent_token = parent_context(request)
+            current = getattr(request.app.state, "settings", settings)
+            compute = Compute(db, current.storage_root)
+            if parent_token:
+                owner_id = compute.owner_for_context(parent_token)
             job_id = uuid4()
             with db.connect() as conn:
                 conn.execute(
@@ -39,7 +45,16 @@ def tracked_operation(db, settings, auth, principal, kind, title):
                 )
             state, code, result = "succeeded", None, None
             try:
-                response = await function(request)
+                current = getattr(request.app.state, "settings", settings)
+                async with compute.slot(
+                    "operation",
+                    job_id,
+                    kind,
+                    owner_id,
+                    current.native_wait,
+                    parent_token,
+                ):
+                    response = await function(request)
                 data = (
                     response.model_dump(mode="json")
                     if hasattr(response, "model_dump")
@@ -67,7 +82,14 @@ def tracked_operation(db, settings, auth, principal, kind, title):
                 state, code = "interrupted", "execution_unconfirmed"
                 raise
             except HTTPException as error:
-                state, code = "failed", f"http_{error.status_code}"
+                state, code = (
+                    "failed",
+                    (
+                        error.detail
+                        if isinstance(error.detail, str) and error.detail.startswith("compute_")
+                        else f"http_{error.status_code}"
+                    ),
+                )
                 raise
             except Exception:
                 state, code = "failed", "operation_failed"
@@ -126,6 +148,11 @@ def list_tasks(db, user, present_media, limit, offset, status=None, service=None
     )
     queries, parameters = [], []
     for source, table, service_column, state_column, permission in sources:
+        state_column = (
+            "CASE WHEN status='running' AND (SELECT state FROM compute_requests "
+            f"WHERE source='{source}' AND job_id={table}.id ORDER BY sequence DESC LIMIT 1)"
+            f"='queued' THEN 'queued' ELSE {state_column} END"
+        )
         queries.append(
             f"SELECT '{source}' AS source,id,created_at,{service_column} AS service,"
             f"{state_column} AS status FROM {table} WHERE ({permission})"
@@ -193,4 +220,12 @@ def list_tasks(db, user, present_media, limit, offset, status=None, service=None
                     "data": data,
                 }
             )
+            compute = conn.execute(
+                "SELECT state,parent_id,error_code FROM compute_requests "
+                "WHERE source=%s AND job_id=%s ORDER BY sequence DESC LIMIT 1",
+                (row["source"], job["id"]),
+            ).fetchone()
+            tasks[-1]["compute"] = compute
+            if compute and compute["state"] == "queued" and row["status"] in {"running", "queued"}:
+                tasks[-1]["status"] = "queued"
     return tasks

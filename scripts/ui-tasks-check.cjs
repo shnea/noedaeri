@@ -51,7 +51,8 @@ const { mediaTasks } = require('./ui-fixtures.cjs');
     const url = new URL(route.request().url());
     const path = url.pathname;
     let body = [];
-    if (path === '/api/me') body = {id: 'fixture-user', role: 'admin', status: approved ? 'approved' : 'pending', csrf: 'fixture-csrf'};
+    if (path === '/api/compute') body = {concurrency: 1, requests: []};
+    else if (path === '/api/me') body = {id: 'fixture-user', role: 'admin', status: approved ? 'approved' : 'pending', csrf: 'fixture-csrf'};
     else if (path === '/api/tasks' && testingPagination) body = Number(url.searchParams.get('offset')) > 0
       ? [] : Array.from({length: 100}, (_, index) => ({...tasks[0], id: `page-fixture-${index}`}));
     else if (path === '/api/tasks') body = tasks.filter(task =>

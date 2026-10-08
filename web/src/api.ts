@@ -42,6 +42,7 @@ export const jobSchema = z.object({
 });
 
 export const serviceSchema = z.object({
+  unavailable_reason: z.string().nullable().optional(),
   kind: z.string(),
   service: z.string(),
   label: z.string(),
@@ -203,6 +204,14 @@ export const vectorSearchResponseSchema = z.object({
 });
 
 const taskBaseSchema = z.object({
+  compute: z
+    .object({
+      state: z.string(),
+      parent_id: z.string().nullable(),
+      error_code: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
   id: z.string(),
   title: z.string(),
   kind: z.string(),
@@ -269,6 +278,20 @@ export type VectorSearchResponse = z.infer<typeof vectorSearchResponseSchema>;
 
 const messages = new Map(
   Object.entries({
+    compute_wait_timeout:
+      "자원 배정 대기 한도를 초과했습니다. 앞선 실행 상태를 확인해 주세요.",
+    compute_queue_full:
+      "자원 배정 대기열이 가득 찼습니다. 잠시 후 다시 요청해 주세요.",
+    compute_process_still_running:
+      "로컬 연산 프로세스가 아직 실행 중입니다. 종료 후 다시 확인해 주세요.",
+    compute_child_still_running:
+      "부모 작업의 연산 단계가 아직 실행 중입니다. 종료 후 다시 확인해 주세요.",
+    compute_not_interrupted:
+      "이 예약은 종료 확인 대상이 아닙니다. 최신 상태를 확인해 주세요.",
+    compute_lease_lost:
+      "자원 예약의 소유권을 잃었습니다. 실행 상태를 확인해 주세요.",
+    n8n_compute_context_not_ready:
+      "n8n의 공통 자원 헤더 연결·검수가 필요합니다.",
     raya_key_required: "Raya 연결 키를 확인해 주세요.",
     raya_not_configured:
       "Raya가 활성화되지 않았습니다. 관리자에게 연결 설정을 확인해 주세요.",

@@ -17,6 +17,10 @@ from typing import Literal
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from .compute import compute_context
+from .execution import inherited_compute_lock
+from .media import JobCancelled, MediaError, native_compute_slot
+
 TIERS = ("L1", "L2", "L3")
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -79,6 +83,7 @@ class Raya:
         else:
             state = self.state
         return {
+            "execution_policy": "per_job",
             "state": state,
             "error_code": self.error or ("raya_process_failed" if state == "error" else None),
             "waiting": self.waiting,
@@ -88,6 +93,7 @@ class Raya:
             "minimum_keep_seconds": self.settings.raya_minimum_keep,
             "idle_seconds": self.settings.raya_idle,
             "wait_seconds": self.settings.raya_wait,
+            "compute_wait_seconds": self.settings.native_wait,
             "timeout_seconds": self.settings.raya_timeout,
             "memory_reserve_bytes": self.settings.raya_memory_reserve,
         }
@@ -127,8 +133,13 @@ class Raya:
             selector.register(self.process.stdout, selectors.EVENT_READ)
             while not line.endswith(b"\n"):
                 remaining = deadline - time.monotonic()
-                if remaining <= 0 or not selector.select(remaining):
+                lease = compute_context.get()
+                if lease and not lease.alive():
+                    raise RayaError("compute_lease_lost")
+                if remaining <= 0:
                     raise RayaError("raya_timeout")
+                if not selector.select(min(remaining, 0.2)):
+                    continue
                 chunk = os.read(self.process.stdout.fileno(), 65537 - len(line))
                 if not chunk:
                     raise RayaError("raya_process_failed")
@@ -164,6 +175,27 @@ class Raya:
                 pending = pending[count:]
 
     def route(self, payload):
+        lease = compute_context.get()
+        if not lease:
+            return self._route(payload)
+        try:
+            with native_compute_slot(
+                self.settings.storage_root,
+                lease.alive,
+                lambda stage: None,
+                self.settings.native_wait,
+            ):
+                try:
+                    return self._route(payload)
+                finally:
+                    # The cached CPU model shares unified memory with the next GPU job.
+                    # Stop it before returning the common slot; the child retains the OS lock.
+                    with self.lock:
+                        self._stop()
+        except (JobCancelled, MediaError):
+            raise RayaError("compute_lease_lost") from None
+
+    def _route(self, payload):
         if not self.settings.raya_enabled:
             raise RayaError("raya_not_configured")
         self.waiting += 1
@@ -203,7 +235,11 @@ class Raya:
                     stderr=subprocess.DEVNULL,
                     start_new_session=True,
                     bufsize=0,
-                    pass_fds=(self.execution_lock.fileno(),),
+                    pass_fds=tuple(
+                        fd
+                        for fd in (self.execution_lock.fileno(), inherited_compute_lock.get())
+                        if fd is not None
+                    ),
                     cwd=self.settings.raya_model_root,
                     env={
                         "PATH": os.environ.get("PATH", ""),
@@ -365,7 +401,13 @@ def install_raya_routes(app, settings, auth, raya, db, principal):
             raise HTTPException(429, "raya_busy", headers={"Retry-After": "5"})
         await slots.acquire()
         try:
-            return await asyncio.to_thread(raya.route, payload)
+            execution = asyncio.create_task(asyncio.to_thread(raya.route, payload))
+            try:
+                return await asyncio.shield(execution)
+            except asyncio.CancelledError:
+                # Keep ownership until the thread has stopped its actual child process.
+                await execution
+                raise
         except RayaError as error:
             code = (
                 429 if error.code == "raya_busy" else 504 if error.code == "raya_timeout" else 503

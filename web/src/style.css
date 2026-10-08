@@ -1027,3 +1027,22 @@ main {
     flex-direction: column;
   }
 }
+/* Resource status belongs to the existing work surface, above the shared filters. */
+.compute-panel {
+  margin-block: 0 24px;
+  padding: 16px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.compute-panel h2 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+.compute-panel p {
+  margin-block: 8px;
+  overflow-wrap: anywhere;
+}
+.compute-panel button {
+  margin: 4px 8px 4px 0;
+}

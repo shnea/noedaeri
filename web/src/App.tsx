@@ -8,6 +8,7 @@ import { AiUsagePanel } from "./AiUsagePanel";
 import { TaskDetails } from "./TaskDetails";
 import { EmbeddingRagPanel } from "./EmbeddingRagPanel";
 import { VoicePanel } from "./VoicePanel";
+import { ComputePanel } from "./ComputePanel";
 import {
   jobSchema,
   aiJobSchema,
@@ -104,8 +105,9 @@ function Details({
         ["tts_loading_and_synthesis", "목소리 모델 로딩·음성 생성 중"],
         [
           "waiting_native_compute",
-          "다른 파일·음성 작업이 자원을 사용 중입니다. 종료 후 시작합니다.",
+          "다른 연산이 자원을 사용 중입니다. 종료 확인 후 시작합니다.",
         ],
+        ["waiting_compute", "공통 실행 자원 배정을 기다리고 있습니다."],
         ["packaging", "결과 묶음 생성 중"],
       ]).get(job.stage);
 
@@ -186,7 +188,7 @@ function Details({
             ? "취소 요청을 전달했습니다. 워커가 종료를 확인할 때까지 기다려 주세요."
             : job.error_code
               ? errorLabel(job.error_code)
-              : (job.status === "running" && stageLabel) ||
+              : (["running", "queued"].includes(job.status) && stageLabel) ||
                 statuses.get(job.status)}
         </p>
         <div className="detail-actions">
@@ -338,9 +340,10 @@ function Details({
             )}
             {job.service === "tts" && (
               <>
-                {artifact.success && artifact.data.voice_source === "default" && (
-                  <p>기본 목소리 · Sohee</p>
-                )}
+                {artifact.success &&
+                  artifact.data.voice_source === "default" && (
+                    <p>기본 목소리 · Sohee</p>
+                  )}
                 <audio
                   aria-label="생성된 음성"
                   controls
@@ -1035,6 +1038,7 @@ export default function App() {
             )}
             {tab === "작업" && (
               <>
+                <ComputePanel csrf={user.csrf} admin={user.role === "admin"} />
                 <div className="filters">
                   <label>
                     서비스
@@ -1184,7 +1188,7 @@ export default function App() {
 
                                         window.scrollTo({ top: 0 });
                                       }}
-                                      job={job.data}
+                                      job={{ ...job.data, status: job.status }}
                                       cancel={() => {
                                         void cancel(job);
                                       }}
@@ -1295,6 +1299,9 @@ export default function App() {
                     <p>
                       {service.available ? "연결 설정됨" : "연결 설정 필요"}
                     </p>
+                    {service.unavailable_reason && (
+                      <p>{service.unavailable_reason}</p>
+                    )}
                     <div className="actions">
                       <button
                         disabled={

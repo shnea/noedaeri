@@ -20,8 +20,9 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .ai_indexing import cleanup_indexing_results, install_indexing_routes, process_indexing_queue
-from .ai_jobs import install_ai_job_routes
+from .ai_jobs import install_ai_job_routes, process_ai_queue
 from .auth import COOKIE, Auth, digest
+from .compute import Compute
 from .config import Settings
 from .db import Database
 from .embeddings import install_embedding_routes
@@ -155,6 +156,16 @@ def create_app(settings: Settings | None = None):
                 logging.getLogger("noedaeri").error("indexing_dispatch_failed")
             await asyncio.sleep(1)
 
+    async def ai_workflows():
+        while True:
+            try:
+                await process_ai_queue(db, getattr(app.state, "settings", settings))
+            except Exception:
+                import logging
+
+                logging.getLogger("noedaeri").error("ai_dispatch_failed")
+            await asyncio.sleep(1)
+
     async def maintenance():
         while True:
             try:
@@ -191,11 +202,17 @@ def create_app(settings: Settings | None = None):
         delivery_task = asyncio.create_task(deliver())
         raya_task = asyncio.create_task(release_raya())
         indexing_task = asyncio.create_task(index_documents())
+        ai_task = asyncio.create_task(ai_workflows())
         yield
         task.cancel()
         delivery_task.cancel()
         raya_task.cancel()
         indexing_task.cancel()
+        ai_task.cancel()
+        try:
+            await ai_task
+        except asyncio.CancelledError:
+            pass
         try:
             await indexing_task
         except asyncio.CancelledError:
@@ -220,6 +237,7 @@ def create_app(settings: Settings | None = None):
     app.state.db, app.state.queue, app.state.storage = db, queue, storage
     app.state.webhooks = webhooks
     app.state.raya = raya
+    app.state.compute = Compute(db, settings.storage_root)
     voices = Voices(db, settings, storage)
     app.state.voices = voices
 
@@ -341,6 +359,22 @@ def create_app(settings: Settings | None = None):
         service: str | None = None,
     ):
         return list_tasks(db, principal(request), present, limit, offset, status, service)
+
+    @app.get("/api/compute")
+    def compute_status(request: Request):
+        user = auth.user(request)
+        return {
+            "concurrency": 1,
+            "requests": app.state.compute.snapshot(None if user["role"] == "admin" else user["id"]),
+        }
+
+    @app.post("/api/admin/compute/{reservation_id}/acknowledge-stopped")
+    def acknowledge_compute(request: Request, reservation_id: UUID, body: dict):
+        auth.user(request, admin=True)
+        if set(body) != {"execution_stopped"} or body["execution_stopped"] is not True:
+            raise HTTPException(422, "compute_stop_confirmation_required")
+        app.state.compute.acknowledge_stopped(reservation_id)
+        return {"released": True}
 
     @app.get("/integrations/SERVICE_INTEGRATION.md")
     @app.get("/api/integrations/guide")
@@ -674,7 +708,9 @@ def create_app(settings: Settings | None = None):
         job = queue.claim(data.worker_id, data.kinds)
         if not job:
             return JSONResponse(None)
-        return {key: job[key] for key in ("id", "kind", "input", "options", "lease_token")}
+        return {
+            key: job[key] for key in ("id", "kind", "input", "options", "lease_token", "owner_id")
+        }
 
     @app.post("/internal/jobs/{job_id}/heartbeat")
     def heartbeat(request: Request, job_id: UUID, data: Lease):

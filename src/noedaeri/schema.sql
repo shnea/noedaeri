@@ -190,3 +190,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS ai_documents_owner_scope
 ALTER TABLE ai_usage DROP CONSTRAINT IF EXISTS ai_usage_project_environment_request_id_provider_model_key;
 CREATE UNIQUE INDEX IF NOT EXISTS ai_usage_owner_request
  ON ai_usage(owner_id,project,environment,request_id,provider,model);
+
+CREATE TABLE IF NOT EXISTS compute_requests (
+ sequence bigserial UNIQUE,
+ id uuid PRIMARY KEY,
+ source text NOT NULL,
+ job_id uuid NOT NULL,
+ kind text NOT NULL,
+ owner_id uuid NOT NULL REFERENCES users(id),
+ token_hash text NOT NULL UNIQUE,
+ parent_id uuid REFERENCES compute_requests(id),
+ state text NOT NULL DEFAULT 'queued' CHECK(state IN
+   ('queued','running','released','cancelled','interrupted')),
+ error_code text,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ started_at timestamptz,
+ finished_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS compute_active ON compute_requests(state,sequence);
+CREATE INDEX IF NOT EXISTS compute_job ON compute_requests(source,job_id,sequence DESC);
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS stage text NOT NULL DEFAULT 'waiting_compute';
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS cancel_requested boolean NOT NULL DEFAULT false;

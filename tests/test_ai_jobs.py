@@ -55,6 +55,7 @@ def setup_ai_settings(app):
     app.state.settings = replace(
         app.state.settings,
         n8n_ai_webhook_url="https://mock-n8n.example/webhook/noedaeri-ai",
+        n8n_compute_context_ready=True,
     )
     return app.state.client, app.state.settings
 

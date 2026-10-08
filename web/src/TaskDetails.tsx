@@ -12,7 +12,7 @@ export function TaskDetails({
   const data = task.data;
 
   const cancellable =
-    (task.source === "ai" && task.status === "running") ||
+    (task.source === "ai" && ["queued", "running"].includes(task.status)) ||
     (task.source === "indexing" && task.status === "queued");
 
   const expired = Boolean(
@@ -26,6 +26,17 @@ export function TaskDetails({
         <p>
           {task.label} · {task.executor}
         </p>
+        {task.compute?.state === "queued" && (
+          <p role="status">공통 실행 자원 배정을 기다리고 있습니다.</p>
+        )}
+        {task.compute?.parent_id && (
+          <p>n8n 부모 작업의 실행 권한을 이어받은 단계입니다.</p>
+        )}
+        {task.compute?.state === "interrupted" && (
+          <p className="error">
+            실행 종료 여부가 불확실하여 자원 예약을 유지합니다.
+          </p>
+        )}
         <p>
           요청자{" "}
           {task.origin === "platform"

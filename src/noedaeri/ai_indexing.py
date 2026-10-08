@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from .ai_jobs import record_usage
 from .auth import Auth
+from .compute import Compute, parent_context
 from .config import Settings
 from .db import Database
 from .embeddings import (
@@ -179,145 +180,176 @@ async def execute_indexing_job(db, settings, owner_id, data):
 
 
 async def run_indexing_job(db: Database, settings: Settings, job_id: UUID) -> dict:
-    # Session locks survive commits, and PostgreSQL releases them if this process dies.
     with db.connect() as conn:
+        job = conn.execute("SELECT * FROM ai_indexing_jobs WHERE id=%s", (job_id,)).fetchone()
         claimed = conn.execute(
             "SELECT pg_try_advisory_lock(%s) AS ok", (lock_key(f"index-job:{job_id}"),)
         ).fetchone()["ok"]
-        job = conn.execute("SELECT * FROM ai_indexing_jobs WHERE id=%s", (job_id,)).fetchone()
         conn.commit()
         if not claimed:
             return serialize_job(job)
         if job["status"] not in {"pending", "running"}:
             return serialize_job(job)
         try:
-            if job["status"] == "running":
-                # A lost worker's provider call may have completed: never silently replay it.
-                raise HTTPException(503, "indexing_execution_interrupted")
-            data = IndexingJobCreate.model_validate(job["payload"])
-            scope = (job["owner_id"], data.project, data.environment, data.collection)
-            scope_key = lock_key("index-scope:" + ":".join(map(str, scope)))
-            available = conn.execute(
-                "SELECT pg_try_advisory_lock(%s) AS ok", (scope_key,)
-            ).fetchone()["ok"]
-            conn.commit()
-            if not available:
-                return serialize_job(job)
-            user = conn.execute(
-                "SELECT status FROM users WHERE id=%s", (job["owner_id"],)
-            ).fetchone()
-            if not user or user["status"] != "approved":
-                raise HTTPException(403, "approval_required")
-            conn.execute(
-                "UPDATE ai_indexing_jobs SET status='running',updated_at=now() WHERE id=%s",
-                (job_id,),
+            async with Compute(db, settings.storage_root).slot(
+                "indexing",
+                job_id,
+                "indexing.documents",
+                job["owner_id"],
+                settings.native_wait,
+            ) as lease:
+                result = await _run_indexing_job(db, settings, job_id, conn)
+                if result.get("error_code") == "embedding_provider_unavailable":
+                    lease.unconfirmed = True
+                return result
+        except HTTPException as error:
+            with db.connect() as conn:
+                job = (
+                    conn.execute(
+                        "UPDATE ai_indexing_jobs SET status='failed',error_code=%s,"
+                        "error_message=%s,"
+                        "payload=NULL,finished_at=now(),updated_at=now(),"
+                        "expires_at=now()+retention_seconds*interval '1 second' "
+                        "WHERE id=%s AND status='pending' RETURNING *",
+                        (error.detail, error.detail, job_id),
+                    ).fetchone()
+                    or conn.execute(
+                        "SELECT * FROM ai_indexing_jobs WHERE id=%s",
+                        (job_id,),
+                    ).fetchone()
+                )
+            return serialize_job(job)
+
+
+async def _run_indexing_job(db, settings, job_id, conn):
+    job = conn.execute("SELECT * FROM ai_indexing_jobs WHERE id=%s", (job_id,)).fetchone()
+    conn.commit()
+    if job["status"] not in {"pending", "running"}:
+        return serialize_job(job)
+    try:
+        if job["status"] == "running":
+            # A lost worker's provider call may have completed: never silently replay it.
+            raise HTTPException(503, "indexing_execution_interrupted")
+        data = IndexingJobCreate.model_validate(job["payload"])
+        scope = (job["owner_id"], data.project, data.environment, data.collection)
+        scope_key = lock_key("index-scope:" + ":".join(map(str, scope)))
+        available = conn.execute("SELECT pg_try_advisory_lock(%s) AS ok", (scope_key,)).fetchone()[
+            "ok"
+        ]
+        conn.commit()
+        if not available:
+            return serialize_job(job)
+        user = conn.execute("SELECT status FROM users WHERE id=%s", (job["owner_id"],)).fetchone()
+        if not user or user["status"] != "approved":
+            raise HTTPException(403, "approval_required")
+        conn.execute(
+            "UPDATE ai_indexing_jobs SET status='running',updated_at=now() WHERE id=%s",
+            (job_id,),
+        )
+        conn.commit()
+        vectors, tokens = [], 0
+        if data.documents:
+            vectors, tokens = await generate_embeddings(
+                settings.gemini_api_key,
+                [document_text(doc) for doc in data.documents],
+                DEFAULT_MODEL,
+                DEFAULT_DIMENSIONS,
             )
-            conn.commit()
-            vectors, tokens = [], 0
-            if data.documents:
-                vectors, tokens = await generate_embeddings(
-                    settings.gemini_api_key,
-                    [document_text(doc) for doc in data.documents],
+            if len(vectors) != len(data.documents) or any(
+                len(v) != DEFAULT_DIMENSIONS or not all(math.isfinite(x) for x in v) or not any(v)
+                for v in vectors
+            ):
+                raise HTTPException(502, "invalid_embedding_response")
+            # Persist usage before index mutation so failed writes don't hide provider calls.
+            with db.connect() as usage_conn:
+                record_usage(
+                    usage_conn,
+                    owner_id=job["owner_id"],
+                    project=data.project,
+                    environment=data.environment,
+                    request_id=f"indexing:{job_id}",
+                    task_type="indexing",
+                    provider="google",
+                    model=DEFAULT_MODEL,
+                    prompt_tokens=tokens,
+                    completion_tokens=0,
+                    total_tokens=tokens,
+                )
+        # Serialize publication; searches see the old or new collection, never half a replace.
+        user = conn.execute(
+            "SELECT status FROM users WHERE id=%s FOR SHARE", (job["owner_id"],)
+        ).fetchone()
+        if user["status"] != "approved":
+            raise HTTPException(403, "approval_required")
+        deleted = 0
+        if data.mode == "replace_all":
+            deleted = conn.execute(
+                "DELETE FROM ai_documents WHERE owner_id=%s AND project=%s "
+                "AND environment=%s AND collection=%s",
+                scope,
+            ).rowcount
+        elif data.delete_ids:
+            deleted = conn.execute(
+                "DELETE FROM ai_documents WHERE owner_id=%s AND project=%s "
+                "AND environment=%s AND collection=%s AND document_id=ANY(%s)",
+                (*scope, data.delete_ids),
+            ).rowcount
+        for doc, vector in zip(data.documents, vectors, strict=True):
+            conn.execute(
+                """INSERT INTO ai_documents
+                (owner_id,project,environment,collection,document_id,title,content,
+                 metadata,embedding,token_count,model,dimensions)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON CONFLICT(owner_id,project,environment,collection,document_id)
+                DO UPDATE SET title=EXCLUDED.title,content=EXCLUDED.content,
+                metadata=EXCLUDED.metadata,embedding=EXCLUDED.embedding,
+                token_count=EXCLUDED.token_count,model=EXCLUDED.model,
+                dimensions=EXCLUDED.dimensions,updated_at=now()""",
+                (
+                    *scope,
+                    doc.id,
+                    doc.title,
+                    doc.content,
+                    Jsonb(doc.metadata),
+                    Jsonb(vector),
+                    tokens // len(data.documents),
                     DEFAULT_MODEL,
                     DEFAULT_DIMENSIONS,
-                )
-                if len(vectors) != len(data.documents) or any(
-                    len(v) != DEFAULT_DIMENSIONS
-                    or not all(math.isfinite(x) for x in v)
-                    or not any(v)
-                    for v in vectors
-                ):
-                    raise HTTPException(502, "invalid_embedding_response")
-                # Persist usage before index mutation so failed writes don't hide provider calls.
-                with db.connect() as usage_conn:
-                    record_usage(
-                        usage_conn,
-                        owner_id=job["owner_id"],
-                        project=data.project,
-                        environment=data.environment,
-                        request_id=f"indexing:{job_id}",
-                        task_type="indexing",
-                        provider="google",
-                        model=DEFAULT_MODEL,
-                        prompt_tokens=tokens,
-                        completion_tokens=0,
-                        total_tokens=tokens,
-                    )
-            # Serialize publication; searches see the old or new collection, never half a replace.
-            user = conn.execute(
-                "SELECT status FROM users WHERE id=%s FOR SHARE", (job["owner_id"],)
-            ).fetchone()
-            if user["status"] != "approved":
-                raise HTTPException(403, "approval_required")
-            deleted = 0
-            if data.mode == "replace_all":
-                deleted = conn.execute(
-                    "DELETE FROM ai_documents WHERE owner_id=%s AND project=%s "
-                    "AND environment=%s AND collection=%s",
-                    scope,
-                ).rowcount
-            elif data.delete_ids:
-                deleted = conn.execute(
-                    "DELETE FROM ai_documents WHERE owner_id=%s AND project=%s "
-                    "AND environment=%s AND collection=%s AND document_id=ANY(%s)",
-                    (*scope, data.delete_ids),
-                ).rowcount
-            for doc, vector in zip(data.documents, vectors, strict=True):
-                conn.execute(
-                    """INSERT INTO ai_documents
-                    (owner_id,project,environment,collection,document_id,title,content,
-                     metadata,embedding,token_count,model,dimensions)
-                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT(owner_id,project,environment,collection,document_id)
-                    DO UPDATE SET title=EXCLUDED.title,content=EXCLUDED.content,
-                    metadata=EXCLUDED.metadata,embedding=EXCLUDED.embedding,
-                    token_count=EXCLUDED.token_count,model=EXCLUDED.model,
-                    dimensions=EXCLUDED.dimensions,updated_at=now()""",
-                    (
-                        *scope,
-                        doc.id,
-                        doc.title,
-                        doc.content,
-                        Jsonb(doc.metadata),
-                        Jsonb(vector),
-                        tokens // len(data.documents),
-                        DEFAULT_MODEL,
-                        DEFAULT_DIMENSIONS,
-                    ),
-                )
-            result = {
-                "indexed_count": len(vectors),
-                "deleted_count": deleted,
-                "model": DEFAULT_MODEL,
-                "dimensions": DEFAULT_DIMENSIONS,
-                "total_tokens": tokens,
-                "usage_estimated": True,
-            }
-            job = conn.execute(
-                """UPDATE ai_indexing_jobs SET status='succeeded',indexed_count=%s,
-                deleted_count=%s,total_tokens=%s,result=%s,payload=NULL,result_state='available',
-                finished_at=now(),updated_at=now(),
-                expires_at=now()+retention_seconds*interval '1 second'
-                WHERE id=%s RETURNING *""",
-                (len(vectors), deleted, tokens, Jsonb(result), job_id),
-            ).fetchone()
-            conn.commit()
-        except (Exception, asyncio.CancelledError) as exc:
-            conn.rollback()
-            code = exc.detail if isinstance(exc, HTTPException) else "indexing_execution_failed"
-            if isinstance(exc, asyncio.CancelledError):
-                code = "indexing_execution_interrupted"
-            job = conn.execute(
-                """UPDATE ai_indexing_jobs SET status='failed',error_code=%s,error_message=%s,
-                payload=NULL,finished_at=now(),updated_at=now(),
-                expires_at=now()+retention_seconds*interval '1 second'
-                WHERE id=%s RETURNING *""",
-                (code, code, job_id),
-            ).fetchone()
-            conn.commit()
-            if isinstance(exc, asyncio.CancelledError):
-                raise
-        return serialize_job(job)
+                ),
+            )
+        result = {
+            "indexed_count": len(vectors),
+            "deleted_count": deleted,
+            "model": DEFAULT_MODEL,
+            "dimensions": DEFAULT_DIMENSIONS,
+            "total_tokens": tokens,
+            "usage_estimated": True,
+        }
+        job = conn.execute(
+            """UPDATE ai_indexing_jobs SET status='succeeded',indexed_count=%s,
+            deleted_count=%s,total_tokens=%s,result=%s,payload=NULL,result_state='available',
+            finished_at=now(),updated_at=now(),
+            expires_at=now()+retention_seconds*interval '1 second'
+            WHERE id=%s RETURNING *""",
+            (len(vectors), deleted, tokens, Jsonb(result), job_id),
+        ).fetchone()
+        conn.commit()
+    except (Exception, asyncio.CancelledError) as exc:
+        conn.rollback()
+        code = exc.detail if isinstance(exc, HTTPException) else "indexing_execution_failed"
+        if isinstance(exc, asyncio.CancelledError):
+            code = "indexing_execution_interrupted"
+        job = conn.execute(
+            """UPDATE ai_indexing_jobs SET status='failed',error_code=%s,error_message=%s,
+            payload=NULL,finished_at=now(),updated_at=now(),
+            expires_at=now()+retention_seconds*interval '1 second'
+            WHERE id=%s RETURNING *""",
+            (code, code, job_id),
+        ).fetchone()
+        conn.commit()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+    return serialize_job(job)
 
 
 async def process_indexing_queue(db, settings):
@@ -362,7 +394,13 @@ def install_indexing_routes(app: FastAPI, db: Database, auth: Auth, settings: Se
                 current.raya_key.encode(),
             ):
                 raise HTTPException(401, "ai_key_required")
-            return PLATFORM_OWNER, False
+            token = parent_context(request)
+            return (
+                Compute(db, current.storage_root).owner_for_context(token)
+                if token
+                else PLATFORM_OWNER,
+                False,
+            )
         if request.url.path.startswith("/api/v1/"):
             if not current.integration_key or not secrets.compare_digest(
                 request.headers.get("X-Noedaeri-API-Key", "").encode(),
@@ -388,6 +426,8 @@ def install_indexing_routes(app: FastAPI, db: Database, auth: Auth, settings: Se
     )
     async def create_indexing_job(request: Request, response: Response):
         owner, _ = authenticate_caller(request)
+        if request.headers.get("X-Noedaeri-Compute-Token"):
+            raise HTTPException(409, "compute_context_only_for_steps")
         data = await read_payload(request, IndexingJobCreate)
         job = await execute_indexing_job(db, get_settings(request), owner, data)
         response.status_code = 202 if job["status"] in {"pending", "running"} else 200

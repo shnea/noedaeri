@@ -4,12 +4,14 @@ import { z } from "zod";
 import { errorLabel, mutation, request } from "./api";
 
 const statusSchema = z.object({
+  execution_policy: z.string().optional(),
   state: z.string(),
   error_code: z.string().nullable(),
   waiting: z.number(),
   minimum_keep_seconds: z.number(),
   idle_seconds: z.number(),
   wait_seconds: z.number(),
+  compute_wait_seconds: z.number().optional(),
   timeout_seconds: z.number(),
   memory_reserve_bytes: z.number(),
 });
@@ -177,66 +179,74 @@ export function RayaPanel({ csrf }: { csrf: string }) {
           <p role="alert">{errorLabel(status.error_code)}</p>
         )}
         <p>
-          요청 시 모델을 로딩하고, 유휴 시간이 지나면 메모리를 해제합니다.
-          난이도를 판단하며 실제 AI 답변은 생성하지 않습니다.
+          요청 시 모델을 로딩하고, 공통 자원 모드에서는 작업 종료 후 메모리를
+          해제합니다. 난이도를 판단하며 실제 AI 답변은 생성하지 않습니다.
         </p>
         {status && (
           <>
-            <form
-              key={`${status.minimum_keep_seconds}/${status.idle_seconds}`}
-              onSubmit={savePolicy}
-            >
-              <div className="form-fields">
-                <label>
-                  최소 유지 시간 (초)
-                  <input
-                    name="minimum"
-                    type="number"
-                    min="0"
-                    max="86400"
-                    required
-                    defaultValue={status.minimum_keep_seconds}
-                  />
-                </label>
-                <label>
-                  유휴 해제 시간 (초)
-                  <input
-                    name="idle"
-                    type="number"
-                    min="1"
-                    max="86400"
-                    required
-                    defaultValue={status.idle_seconds}
-                  />
-                </label>
-              </div>
+            <p className="muted">
+              자원 배정 대기{" "}
+              {status.compute_wait_seconds ?? status.wait_seconds}초 · 로딩 포함
+              제한 {status.timeout_seconds}초 · 로딩 전 여유 메모리{" "}
+              {(status.memory_reserve_bytes / 1024 ** 3).toFixed(1)} GiB
+            </p>
+            {status.execution_policy === "per_job" ? (
               <p className="muted">
-                최대 대기 {status.wait_seconds}초 · 로딩 포함 제한{" "}
-                {status.timeout_seconds}초 · 로딩 전 여유 메모리{" "}
-                {(status.memory_reserve_bytes / 1024 ** 3).toFixed(1)} GiB
+                현재는 작업마다 모델을 해제합니다. 저장된 최소 유지·유휴 시간은
+                모델 재사용 모드에서 적용할 설정입니다.
               </p>
-              <div className="detail-actions">
-                <button disabled={busy}>실행 정책 저장</button>
-                <button
-                  type="button"
-                  disabled={
-                    busy ||
-                    [
-                      "off",
-                      "disabled",
-                      "loading",
-                      "processing",
-                      "stopping",
-                    ].includes(status.state)
-                  }
-                  onClick={() => {
-                    void perform("/api/admin/raya/release", undefined);
-                  }}
-                >
-                  모델 메모리 해제
-                </button>
-              </div>
-            </form>
+            ) : (
+              <form
+                key={`${status.minimum_keep_seconds}/${status.idle_seconds}`}
+                onSubmit={savePolicy}
+              >
+                <div className="form-fields">
+                  <label>
+                    최소 유지 시간 (초)
+                    <input
+                      name="minimum"
+                      type="number"
+                      min="0"
+                      max="86400"
+                      required
+                      defaultValue={status.minimum_keep_seconds}
+                    />
+                  </label>
+                  <label>
+                    유휴 해제 시간 (초)
+                    <input
+                      name="idle"
+                      type="number"
+                      min="1"
+                      max="86400"
+                      required
+                      defaultValue={status.idle_seconds}
+                    />
+                  </label>
+                </div>
+                <div className="detail-actions">
+                  <button disabled={busy}>실행 정책 저장</button>
+                  <button
+                    type="button"
+                    disabled={
+                      busy ||
+                      [
+                        "off",
+                        "disabled",
+                        "loading",
+                        "processing",
+                        "stopping",
+                      ].includes(status.state)
+                    }
+                    onClick={() => {
+                      void perform("/api/admin/raya/release", undefined);
+                    }}
+                  >
+                    모델 메모리 해제
+                  </button>
+                </div>
+              </form>
+            )}
           </>
         )}
       </section>
@@ -275,8 +285,8 @@ export function RayaPanel({ csrf }: { csrf: string }) {
           </label>
           <p className="muted">
             최대 512토큰으로 판단합니다. 첫 실행은 로딩 시간이 필요합니다. 이
-            화면의 요청과 결과는 학습 데이터로 저장하지 않습니다. 이미지
-            내용은 분석하지 않고 포함 여부만 전달합니다.
+            화면의 요청과 결과는 학습 데이터로 저장하지 않습니다. 이미지 내용은
+            분석하지 않고 포함 여부만 전달합니다.
           </p>
           <button
             className="primary"

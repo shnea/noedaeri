@@ -9,7 +9,9 @@ from uuid import UUID, uuid4
 
 import httpx
 
+from .compute import Compute
 from .config import Settings
+from .db import Database
 from .execution import execution_lock
 from .media import (
     JobCancelled,
@@ -26,6 +28,7 @@ from .tts import normalize_reference, synthesize
 def run():
     settings = Settings.from_env()
     storage = Storage(settings)
+    compute = Compute(Database(settings.database_url), storage.root)
     worker_id = uuid4()
     stopping = False
 
@@ -125,19 +128,39 @@ def run():
                         job_id = UUID(job["id"])
                         source = storage.path("uploads", job_id, "input")
                         output = storage.path("results", job_id, "thumbnail.jpg")
-                        with native_compute_slot(storage.root, alive, stage, settings.native_wait):
-                            result = execute_job(
-                                settings,
-                                storage,
-                                job,
-                                client,
-                                lease,
-                                source,
-                                output,
-                                capacity_alive,
+                        with compute.ticket(
+                            "media", UUID(job["id"]), job["kind"], UUID(job["owner_id"])
+                        ) as compute_lease:
+                            deadline = time.monotonic() + settings.native_wait
+                            stage("waiting_compute")
+                            while not compute_lease.try_start():
+                                if not alive():
+                                    raise JobCancelled()
+                                if time.monotonic() >= deadline:
+                                    raise MediaError("compute_wait_timeout")
+                                time.sleep(0.2)
+
+                            def compute_alive():
+                                return compute_lease.alive() and capacity_alive()
+
+                            with native_compute_slot(
+                                storage.root,
+                                compute_alive,
                                 stage,
-                                reserve,
-                            )
+                                max(0, deadline - time.monotonic()),
+                            ):
+                                result = execute_job(
+                                    settings,
+                                    storage,
+                                    job,
+                                    client,
+                                    lease,
+                                    source,
+                                    output,
+                                    compute_alive,
+                                    stage,
+                                    reserve,
+                                )
                         if not capacity_alive():
                             raise JobCancelled()
                     except JobCancelled:

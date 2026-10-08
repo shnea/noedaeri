@@ -92,6 +92,7 @@ def test_catalog_contains_every_implemented_service_and_configuration_state(app)
     app.state.settings = replace(
         app.state.settings,
         n8n_ai_webhook_url="https://workflow.example/ai",
+        n8n_compute_context_ready=True,
         gemini_api_key="fixture-key",
         raya_enabled=True,
         tts_enabled=True,

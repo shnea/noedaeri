@@ -244,7 +244,7 @@ def test_admin_policy_persists_and_release_reaps(app, fake_runtime):
         raya_model_root=fake_runtime / "model",
     )
     assert client.post("/api/raya/route", json=PAYLOAD).status_code == 200
-    process = app.state.raya.process
+    assert app.state.raya.process is None  # Common admission releases model memory per API job.
     response = client.patch(
         "/api/admin/raya/policy",
         json={
@@ -268,4 +268,4 @@ def test_admin_policy_persists_and_release_reaps(app, fake_runtime):
         == 422
     )
     assert client.post("/api/admin/raya/release").json()["state"] == "off"
-    assert process.poll() is not None
+    assert app.state.raya.process is None

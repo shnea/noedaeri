@@ -38,6 +38,7 @@ class Settings:
     gemini_api_key: str = ""
     n8n_origin: str = ""
     n8n_ai_webhook_url: str = ""
+    n8n_compute_context_ready: bool = False
     tts_enabled: bool = False
     tts_timeout: int = 600
     native_wait: int = 600
@@ -80,6 +81,7 @@ class Settings:
             ).resolve(),
             voice_storage_limit=int(os.environ.get("VOICE_STORAGE_MAX_BYTES", str(512 * 1024**2))),
             n8n_origin=origin,
+            n8n_compute_context_ready=os.environ.get("N8N_COMPUTE_CONTEXT_READY", "0") == "1",
             n8n_ai_webhook_url=os.environ.get("N8N_AI_WEBHOOK_URL")
             or (f"{origin}/webhook/noedaeri-ai" if origin else ""),
             raya_enabled=os.environ.get("RAYA_ENABLED", "0") == "1",

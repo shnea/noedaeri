@@ -157,7 +157,13 @@ def service_catalog(settings):
         for item in SERVICES.values()
     ]
     for kind, service, label, interface, available in (
-        ("ai.workflow", "n8n", "AI 작업 · n8n 워크플로", "ai", bool(settings.n8n_ai_webhook_url)),
+        (
+            "ai.workflow",
+            "n8n",
+            "AI 작업 · n8n 워크플로",
+            "ai",
+            bool(settings.n8n_ai_webhook_url) and settings.n8n_compute_context_ready,
+        ),
         ("raya.route", "raya", "Raya 요청 난이도 판단", "raya", settings.raya_enabled),
         (
             "embedding.encode",
@@ -183,6 +189,9 @@ def service_catalog(settings):
                 "input_type": "text" if interface in {"ai", "embedding", "raya"} else "json",
                 "interface": interface,
                 "available": available,
+                "unavailable_reason": "n8n의 공통 자원 헤더 연결·검수가 필요합니다."
+                if interface == "ai" and not settings.n8n_compute_context_ready
+                else None,
                 "task_types": [
                     {"value": key, "label": value} for key, value in AI_TASK_TYPES.items()
                 ]
