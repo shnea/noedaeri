@@ -20,6 +20,16 @@ SAMPLE_LIMIT = 64 * 1024**2
 PROFILE_RESERVATION = 3_000_000
 
 
+def default_voice():
+    return {
+        "id": None,
+        "kind": "preset",
+        "speaker": "Sohee",
+        "reference_text": "",
+        "sample_sha256": None,
+    }
+
+
 class NewVoice(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     idempotency_key: UUID
@@ -107,6 +117,11 @@ class Voices:
         return data
 
     def resolve(self, conn, user, voice_id, payload, instruct):
+        if voice_id is None:
+            return None
+        existing = conn.execute("SELECT status FROM voices WHERE id=%s", (voice_id,)).fetchone()
+        if not existing or existing["status"] == "deleted":
+            return None
         scope = {key: payload[key] for key in ("requester_id", "project", "environment")}
         row = self.owned(conn, user, voice_id, scope)
         if row["status"] != "ready":

@@ -115,7 +115,11 @@ function Details({
     Date.parse(job.expires_at) > Date.now();
 
   const artifact = z
-    .object({ type: z.literal("artifact"), media_type: z.string() })
+    .object({
+      type: z.literal("artifact"),
+      media_type: z.string(),
+      voice_source: z.enum(["default", "registered"]).optional(),
+    })
     .safeParse(job.result);
 
   const imageResult =
@@ -333,13 +337,18 @@ function Details({
               </a>
             )}
             {job.service === "tts" && (
-              <audio
-                aria-label="생성된 음성"
-                controls
-                preload="metadata"
-                className="speech-result"
-                src={`/api/jobs/${job.id}/result`}
-              />
+              <>
+                {artifact.success && artifact.data.voice_source === "default" && (
+                  <p>기본 목소리 · Sohee</p>
+                )}
+                <audio
+                  aria-label="생성된 음성"
+                  controls
+                  preload="metadata"
+                  className="speech-result"
+                  src={`/api/jobs/${job.id}/result`}
+                />
+              </>
             )}
             {!artifact.success &&
               !videoPackage.success &&

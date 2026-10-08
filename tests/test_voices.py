@@ -117,7 +117,67 @@ def test_preset_crud_idempotency_and_scope(app):
     assert task["service"] == "tts"
     assert app.state.queue.cancel(UUID(task["id"]), UUID(voice["owner_id"]))
     assert client.delete(f"/api/voices/{voice['id']}").json()["deleted"]
-    assert speech(client, voice).status_code == 404
+    fallback = speech(client, voice)
+    assert fallback.status_code == 201
+    assert fallback.json()["options"]["resolved_voice_id"] is None
+
+
+@pytest.mark.parametrize("selection", ["omitted", "null", "unknown"])
+def test_default_voice_requires_no_profile_and_preserves_idempotency(app, selection):
+    client = enabled(app)
+    payload = {
+        "kind": "tts.synthesize",
+        "title": "기본 음성 테스트",
+        "idempotency_key": str(uuid4()),
+        "input": {"type": "text", "text": "안녕하세요."},
+    }
+    if selection != "omitted":
+        payload["options"] = {"voice_id": str(uuid4()) if selection == "unknown" else None}
+    response = client.post("/api/jobs", json=payload)
+    assert response.status_code == 201
+    job = response.json()
+    assert job["options"]["resolved_voice_id"] is None
+    assert client.post("/api/jobs", json=payload).json()["id"] == job["id"]
+    assert client.get("/api/voices").json() == []
+    claimed = app.state.queue.claim(uuid4(), ["tts.synthesize"])
+    headers = {"Authorization": "Bearer " + app.state.settings.worker_key}
+    endpoint = f"/internal/jobs/{job['id']}/voice"
+    voice = client.get(endpoint, params={"token": str(claimed["lease_token"])}, headers=headers)
+    assert voice.status_code == 200
+    assert voice.json()["id"] is None
+    assert voice.json()["speaker"] == "Sohee"
+    assert client.get(endpoint, params={"token": str(uuid4())}, headers=headers).status_code == 409
+
+
+def test_default_voice_does_not_hide_scope_or_validation_errors(app):
+    client = enabled(app)
+    voice = profile(client).json()
+    assert (
+        speech(client, voice, input={"type": "text", "text": "x", "project": "other"}).status_code
+        == 404
+    )
+    assert speech(client, voice, options={"voice_id": "malformed"}).status_code == 422
+    # Worker selection is a server-owned snapshot, never caller supplied.
+    assert speech(client, voice, options={"resolved_voice_id": None}).status_code == 422
+
+
+def test_platform_default_voice_needs_requester_but_no_registered_profile(app):
+    client = enabled(app)
+    client.cookies.clear()
+    client.headers["X-Noedaeri-API-Key"] = app.state.settings.integration_key
+    payload = {
+        "kind": "tts.synthesize",
+        "title": "플랫폼 기본 목소리",
+        "idempotency_key": str(uuid4()),
+        "input": {"type": "text", "text": "안녕하세요."},
+    }
+    assert client.post("/api/v1/jobs", json=payload).status_code == 422
+    payload["input"]["requester_id"] = "caller-without-profile"
+    response = client.post("/api/v1/jobs", json=payload)
+    assert response.status_code == 201
+    assert response.json()["options"]["resolved_voice_id"] is None
+    assert client.post("/api/v1/jobs", json=payload).json()["id"] == response.json()["id"]
+    assert client.get("/api/v1/voices?requester_id=caller-without-profile").json() == []
 
 
 def test_owner_and_approval_gate(app):
@@ -275,13 +335,31 @@ def test_reference_quota_and_upload_limit(app):
                 os.environ.get("RUN_TTS_SMOKE") != "1", reason="opt-in MLX worker generation"
             ),
         ),
+        pytest.param(
+            "default",
+            marks=pytest.mark.skipif(
+                os.environ.get("RUN_TTS_SMOKE") != "1", reason="opt-in default voice generation"
+            ),
+        ),
     ],
 )
 def test_tts_worker_http_flow(app, kind):
     client = enabled(app)
     app.state.storage.settings = replace(app.state.settings, storage_limit=128 * 1024**2)
-    voice = profile(client, kind).json()
-    if kind == "clone":
+    voice = None if kind == "default" else profile(client, kind).json()
+    if kind == "default":
+        response = client.post(
+            "/api/jobs",
+            json={
+                "kind": "tts.synthesize",
+                "title": "기본 목소리 음성 생성",
+                "idempotency_key": str(uuid4()),
+                "input": {"type": "text", "text": "안녕하세요."},
+            },
+        )
+        assert response.status_code == 201
+        job_id = response.json()["id"]
+    elif kind == "clone":
         job_id = voice["registration_job_id"]
         assert (
             client.put(
@@ -336,6 +414,11 @@ def test_tts_worker_http_flow(app, kind):
             assert client.get(f"/api/voices/{voice['id']}").json()["status"] == "ready"
         else:
             assert job["result"]["duration_seconds"] > 0
+            if kind == "default":
+                assert job["result"]["voice_source"] == "default"
+                assert job["result"]["speaker"] == "Sohee"
+                assert job["result"]["voice_id"] is None
+                assert client.get("/api/voices").json() == []
     finally:
         process.terminate()
         process.wait(timeout=10)

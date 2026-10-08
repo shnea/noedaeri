@@ -32,7 +32,7 @@ from .raya import Raya, install_raya_routes
 from .services import SERVICES, service_catalog
 from .storage import Storage
 from .tasks import cleanup_operation_results, list_tasks
-from .voices import SAMPLE_LIMIT, Voices, install_voice_routes
+from .voices import SAMPLE_LIMIT, Voices, default_voice, install_voice_routes
 
 
 class NewJob(BaseModel):
@@ -424,9 +424,12 @@ def create_app(settings: Settings | None = None):
                 (user["id"], data.idempotency_key),
             ).fetchone()
             if existing:
+                existing_options = existing["options"]
+                if data.kind == "tts.synthesize":
+                    existing_options = {key: existing_options.get(key) for key in options}
                 if (
                     existing["kind"] != data.kind
-                    or existing["options"] != options
+                    or existing_options != options
                     or existing["input"] != data.input
                     or existing["title"] != data.title
                     or existing["retry_of"] != data.retry_of
@@ -450,7 +453,11 @@ def create_app(settings: Settings | None = None):
                 if original["kind"] != data.kind:
                     raise HTTPException(422, "invalid_job_kind")
             if data.kind == "tts.synthesize":
-                voices.resolve(conn, user, options["voice_id"], data.input, options["instruct"])
+                voice = voices.resolve(
+                    conn, user, options["voice_id"], data.input, options["instruct"]
+                )
+                # Pin the selection at admission; idempotent retries keep the original choice.
+                options["resolved_voice_id"] = str(voice["id"]) if voice else None
             reserved = conn.execute(
                 "SELECT COALESCE(sum(CASE WHEN status='uploading' THEN %s ELSE input_bytes END "
                 "+output_reserved),0) "
@@ -749,9 +756,10 @@ def create_app(settings: Settings | None = None):
             ).fetchone()
             if not job or job["kind"] not in {"tts.synthesize", "tts.voice.register"}:
                 raise HTTPException(409, "lease_lost")
-            row = conn.execute(
-                "SELECT * FROM voices WHERE id=%s", (job["options"]["voice_id"],)
-            ).fetchone()
+            voice_id = job["options"].get("resolved_voice_id", job["options"].get("voice_id"))
+            if job["kind"] == "tts.synthesize" and voice_id is None:
+                return default_voice()
+            row = conn.execute("SELECT * FROM voices WHERE id=%s", (voice_id,)).fetchone()
             if not row or row["status"] in {"deleted", "cleanup_failed"}:
                 raise HTTPException(409, "voice_sample_missing")
             if job["kind"] == "tts.voice.register":

@@ -118,6 +118,11 @@ def synthesize(settings, storage, job, voice, alive, stage):
         result = json.loads(raw)
         if "error" in result:
             raise MediaError(result["error"])
-        return result
+        return {
+            **result,
+            "voice_id": str(voice["id"]) if voice["id"] else None,
+            "speaker": voice["speaker"],
+            "voice_source": "registered" if voice["id"] else "default",
+        }
     finally:
         request.unlink(missing_ok=True)

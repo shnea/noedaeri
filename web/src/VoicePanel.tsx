@@ -467,12 +467,11 @@ function SpeechForm({
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(false);
   const [error, setError] = useState("");
-  const voice = voices.find((item) => item.id === selected) ?? voices[0];
+  const voice = voices.find((item) => item.id === selected);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
 
-    if (!voice) return;
     setBusy(true);
     setLocked(true);
     setError("");
@@ -484,19 +483,19 @@ function SpeechForm({
           user.csrf,
           JSON.stringify({
             kind: "tts.synthesize",
-            title: title.trim() || `${voice.name} 음성 생성`,
+            title: title.trim() || `${voice?.name ?? "기본 목소리"} 음성 생성`,
             idempotency_key: key,
             input: {
               type: "text",
               text,
               language,
-              requester_id: voice.requester_id,
-              project: voice.project,
-              environment: voice.environment,
+              requester_id: voice?.requester_id ?? user.id,
+              project: voice?.project ?? "default",
+              environment: voice?.environment ?? "production",
             },
             options: {
-              voice_id: voice.id,
-              instruct: voice.kind === "preset" ? instruct : "",
+              voice_id: voice?.id ?? null,
+              instruct: voice?.kind === "clone" ? "" : instruct,
             },
           }),
         ),
@@ -522,19 +521,21 @@ function SpeechForm({
         생성 상태와 결과 재생·다운로드는 작업에서 확인합니다. 모델은 요청 시
         로딩하고 작업 종료 시 해제합니다.
       </p>
+      <p className="muted">
+        목소리를 선택하지 않으면 기본 목소리(Sohee)를 사용합니다. 목소리 등록 없이도
+        바로 음성을 만들 수 있습니다.
+      </p>
       <form onSubmit={submit}>
         <div className="form-fields">
           <label>
             사용할 목소리
             <select
               aria-label="사용할 목소리"
-              disabled={locked || !voices.length}
+              disabled={locked}
               value={voice?.id ?? ""}
               onChange={(event) => setSelected(event.target.value)}
             >
-              {!voices.length && (
-                <option value="">목소리를 먼저 등록하세요</option>
-              )}
+              <option value="">기본 목소리 · Sohee</option>
               {voices.map((item) => (
                 <option key={item.id} value={item.id}>
                   {item.name} · {item.requester_id} · {item.project} · {item.environment}
@@ -565,7 +566,7 @@ function SpeechForm({
               placeholder="예: 첫 안내 음성"
             />
           </label>
-          {voice?.kind === "preset" && (
+          {voice?.kind !== "clone" && (
             <label>
               말투 지시 (선택)
               <input
@@ -601,7 +602,7 @@ function SpeechForm({
         )}
         <button
           className="primary"
-          disabled={busy || !voice || !enabled || !text.trim()}
+          disabled={busy || !enabled || !text.trim()}
         >
           {busy
             ? "작업 등록 중…"

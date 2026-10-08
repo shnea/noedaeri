@@ -62,7 +62,7 @@ class SpeechInput(BaseModel):
 
 class SpeechOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    voice_id: UUID
+    voice_id: UUID | None = None
     instruct: str = Field(default="", max_length=300)
 
 

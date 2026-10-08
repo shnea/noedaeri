@@ -1,6 +1,6 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 16 · 기준일: 2026-10-08
+문서 버전: 17 · 기준일: 2026-10-08
 
 ## 현재 연결 가능한 범위
 
@@ -113,7 +113,26 @@ WAV·MP3·FLAC·OGG·M4A·AAC를 허용하고 참조 음성은 3~30초·최대 6
 삭제 실패는 `deleted:false,status:cleanup_failed`이며 삭제를 다시 요청한다. 이름 변경 후 같은
 등록 멱등 키로 과거 이름을 전송하면 충돌하므로 기존 프로필을 조회한다.
 
-### 선택한 목소리로 합성
+### 기본 목소리 또는 선택한 목소리로 합성
+
+목소리 등록 없이도 합성할 수 있다. `options` 또는 `voice_id`를 생략하거나 `voice_id:null`을
+보내면 내장 기본 목소리 **Sohee**를 사용한다. 형식이 올바른 UUID지만 미등록·삭제된 ID인 경우도
+기본 목소리로 처리한다. 요청자별 목소리를 자동으로 검색·선택하지 않는다. 다른 요청자·프로젝트·
+환경의 존재하는 프로필은 기존 권한 오류를 반환하며, 검증 중이거나 참조 파일이 유실된 프로필을
+기본 목소리로 바꿔 오류를 숨기지 않는다. UUID 형식이 잘못된 값은 422다.
+
+기본 목소리 요청 예시:
+
+```json
+{
+  "kind": "tts.synthesize",
+  "title": "기본 안내 음성",
+  "idempotency_key": "<새 UUID>",
+  "input": {"type": "text", "text": "안녕하세요.", "requester_id": "<인증된 요청자 ID>"}
+}
+```
+
+등록한 목소리를 지정하려면 다음과 같이 요청한다.
 
 ```json
 {
@@ -137,11 +156,17 @@ WAV·MP3·FLAC·OGG·M4A·AAC를 허용하고 참조 음성은 3~30초·최대 6
 `instruct`는 기본 목소리의 말투 지시 최대 300자다. 참조 목소리에는 빈 값만 허용한다.
 플랫폼은 `requester_id`를 반드시 전달한다. 요청자·프로젝트·환경은 프로필과 일치해야 한다.
 웹은 요청자를 생략하면 로그인한 사용자 ID를 사용한다. 웹 관리자는 플랫폼 프로필도 관리·테스트할 수 있다.
-아직 검증되지 않은 목소리, 삭제된 목소리, 참조 파일이 없는 목소리는 실행을 거부한다.
+아직 검증되지 않은 목소리와 참조 파일이 없는 목소리는 실행을 거부한다.
+접수 시 반환한 `options.resolved_voice_id`는 실제 사용할 등록 프로필 ID이며 기본 목소리는
+`null`이다. 서버가 결정하는 값이므로 요청에 직접 넣지 않는다. 요청의 `voice_id`는 그대로
+보관하며 동일 멱등 키 재전송은 최초 선택을 유지한다.
 
 음성 생성 완료는 기존 웹훅으로 받으며 반복 조회가 필요하지 않다. 성공 결과는
 `type:artifact`, `name:speech.wav`, `media_type:audio/wav`, `duration_seconds`, `sample_rate`,
-`elapsed_seconds`, `peak_memory_bytes`를 포함한다. MLX 최대 메모리는 프로세스 전체 RSS가 아니다.
+`elapsed_seconds`, `peak_memory_bytes`, `voice_id`, `speaker`, `voice_source`를 포함한다.
+`voice_source`는 기본 사용 시 `default`, 등록 프로필 사용 시 `registered`다. 기본 결과의
+`voice_id`는 `null`, `speaker`는 `Sohee`이며 참조 프로필은 `speaker:null`이다.
+MLX 최대 메모리는 프로세스 전체 RSS가 아니다.
 `GET /api/v1/jobs/{job_id}/result`로 WAV를 받고 플랫폼 파일 서비스에 저장한 뒤 기존
 `receipt`로 저장 확인한다. 기존 알림 멱등 처리·다운로드 복구·만료 계약을 그대로 따른다.
 등록·생성도 **작업** 목록과 **서비스**에 표시한다.
