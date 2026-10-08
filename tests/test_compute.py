@@ -314,12 +314,67 @@ def test_offline_n8n_patch_preserves_export_and_credentials():
                 }
                 for name in module.HTTP_STEPS
             ),
+            {
+                "name": "요청 정규화",
+                "type": "n8n-nodes-base.code",
+                "parameters": {"jsCode": "return $input.all();"},
+            },
         ]
     }
     prepared = module.prepare(export)
-    for original, node in zip(export["nodes"][1:], prepared["nodes"][1:], strict=True):
+    for original, node in zip(export["nodes"][1:3], prepared["nodes"][1:3], strict=True):
         assert node["credentials"] == original["credentials"]
         assert "sendHeaders" not in original["parameters"]
         assert node["parameters"]["headerParameters"]["parameters"] == [
             {"name": module.HEADER, "value": module.EXPRESSION}
         ]
+    assert module.prepare(prepared) == prepared
+
+
+def test_prepared_normalizer_keeps_request_and_pairing_but_omits_compute_token():
+    import importlib.util
+    import json
+    import subprocess
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location("prepare", Path("scripts/prepare_n8n_compute.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    export = {
+        "nodes": [
+            {"name": "웹훅 접수"},
+            *(
+                {"name": name, "type": "n8n-nodes-base.httpRequest", "parameters": {}}
+                for name in module.HTTP_STEPS
+            ),
+            {
+                "name": "요청 정규화",
+                "type": "n8n-nodes-base.code",
+                "parameters": {"jsCode": "return $input.all();"},
+            },
+        ],
+        "settings": {"executionOrder": "v1"},
+    }
+    prepared = module.prepare(export)
+    code = prepared["nodes"][-1]["parameters"]["jsCode"]
+    runner = (
+        "const fs=require('fs'); const {code,input}=JSON.parse(fs.readFileSync(0,'utf8'));"
+        "const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;"
+        "new AsyncFunction('$input',code)({all:()=>input})"
+        ".then(r=>process.stdout.write(JSON.stringify(r)));"
+    )
+    item = {
+        "json": {"prompt": "fixture", "compute_context": {"token": "short-lived-secret"}},
+        "pairedItem": {"item": 0},
+    }
+    result = subprocess.run(
+        ["node", "-e", runner],
+        input=json.dumps({"code": code, "input": [item]}),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert json.loads(result.stdout) == [{"json": {"prompt": "fixture"}, "pairedItem": {"item": 0}}]
+    assert export["nodes"][-1]["parameters"]["jsCode"] == "return $input.all();"
+    assert prepared["settings"]["executionOrder"] == "v1"
+    assert all(prepared["settings"][key] == val for key, val in module.EXECUTION_SETTINGS.items())

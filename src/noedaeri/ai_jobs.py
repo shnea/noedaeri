@@ -264,6 +264,10 @@ async def _execute_ai_job(db, settings, owner_id, job_id, data):
             with db.connect() as conn:
                 conn.execute("UPDATE ai_jobs SET stage='executing' WHERE id=%s", (job_id,))
             n8n_result = await run_n8n_workflow(settings, data)
+            if n8n_result.get("status") in {"failed", "error", "cancelled"}:
+                # A finished workflow can report provider failure with HTTP 200.
+                # This is a known terminal failure, not an unconfirmed remote execution.
+                raise HTTPException(424, "n8n_workflow_failed")
             with db.connect() as conn:
                 conn.execute(
                     """

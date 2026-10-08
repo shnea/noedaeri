@@ -32,7 +32,7 @@ def main():
     script = (
         'tell application "System Events"\n'
         "activate\n"
-        'set answer to display dialog "X-NOEDAERI-API-KEY 값을 입력하세요.\\n'
+        f'set answer to display dialog "{args.key} 값을 입력하세요.\\n'
         '입력값은 암호화하여 저장됩니다." default answer "" with hidden answer '
         'buttons {"취소", "암호화하여 저장"} default button "암호화하여 저장" '
         'cancel button "취소" with title "뇌대리 · API 키 설정"\n'

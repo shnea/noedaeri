@@ -85,6 +85,32 @@ def test_ai_job_sync_execution(app, mock_n8n):
     assert history[0]["data"]["result"] == data["result"]
 
 
+def test_n8n_completed_failure_is_not_success_or_uncertain_execution(app, mock_n8n, monkeypatch):
+    calls = []
+
+    async def failed_workflow(self, url, json=None, **kwargs):
+        calls.append(json["request_id"])
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"status": "failed", "error_code": "all_providers_exhausted", "result": None},
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", failed_workflow)
+    client, settings = setup_ai_settings(app)
+    headers = {"X-Noedaeri-API-Key": settings.integration_key}
+    payload = {"request_id": "completed-failure", "task_type": "blog.tags", "prompt": "fixture"}
+    response = client.post("/api/v1/ai/jobs", headers=headers, json=payload)
+    assert response.status_code == 424
+    assert response.json()["detail"] == "n8n_workflow_failed"
+    reused = client.post("/api/v1/ai/jobs", headers=headers, json=payload).json()
+    assert reused["status"] == "failed" and reused["result"] is None and reused["reused"]
+    assert len(calls) == 1
+    with app.state.db.connect() as conn:
+        row = conn.execute("SELECT state FROM compute_requests WHERE source='ai'").fetchone()
+        assert row["state"] == "released"
+
+
 def test_ai_job_idempotency_and_reused(app, mock_n8n):
     client, settings = setup_ai_settings(app)
     headers = {"X-Noedaeri-API-Key": settings.integration_key}

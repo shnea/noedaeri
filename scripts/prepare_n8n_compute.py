@@ -12,6 +12,13 @@ EXPRESSION = (
     "} catch { return ''; } })() }}"
 )
 HTTP_STEPS = {"공통 벡터 검색", "Raya 난이도 판단"}
+NORMALIZER_MARKER = "// noedaeri: omit compute context from downstream data"
+EXECUTION_SETTINGS = {
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveManualExecutions": False,
+    "saveExecutionProgress": False,
+}
 
 
 def prepare(workflow):
@@ -36,6 +43,24 @@ def prepare(workflow):
         patched.add(node["name"])
     if patched != HTTP_STEPS:
         raise ValueError("workflow_compute_steps_missing")
+    normalizer = next((n for n in nodes if n.get("name") == "요청 정규화"), None)
+    if not normalizer or normalizer.get("type") != "n8n-nodes-base.code":
+        raise ValueError("workflow_normalizer_missing")
+    code = normalizer.get("parameters", {}).get("jsCode")
+    if not isinstance(code, str) or not code.strip():
+        raise ValueError("workflow_normalizer_code_missing")
+    if not code.startswith(NORMALIZER_MARKER):
+        # The HTTP expressions read the original webhook input, not model-facing data.
+        normalizer["parameters"]["jsCode"] = (
+            NORMALIZER_MARKER
+            + "\nconst normalized = await (async () => {\n"
+            + code
+            + "\n})();\nreturn normalized.map(item => {\n"
+            "  const { compute_context, ...json } = item.json;\n"
+            "  return { ...item, json };\n});"
+        )
+    # The initial webhook data contains the short-lived lease; don't persist node payloads.
+    result.setdefault("settings", {}).update(EXECUTION_SETTINGS)
     return result
 
 
@@ -55,7 +80,7 @@ def main():
         args.output.chmod(0o600)
     except (OSError, ValueError, KeyError):
         raise SystemExit("Workflow export could not be prepared; no server changes made") from None
-    print("Prepared two internal HTTP steps. Import and live validation remain pending.")
+    print("Prepared internal headers and context isolation. Import and validation remain pending.")
 
 
 if __name__ == "__main__":
