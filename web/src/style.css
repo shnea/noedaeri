@@ -1003,6 +1003,27 @@ main {
   width: min(100%, 420px);
   margin-bottom: 16px;
 }
+
+.transcript-segments {
+  max-height: 24rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.transcript-segments p {
+  display: grid;
+  grid-template-columns: 8rem minmax(0, 1fr);
+  gap: 12px;
+}
+.segment-time {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 600px) {
+  .transcript-segments p {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
 .voice-directory td {
   vertical-align: top;
 }

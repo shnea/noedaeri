@@ -5,6 +5,7 @@ __pycache__/
 /.venv/
 /raya_runtime/.venv/
 /tts_runtime/.venv/
+/stt_runtime/.venv/
 /data/
 /models/
 /.pytest_cache/

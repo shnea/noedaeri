@@ -9,6 +9,7 @@ import { TaskDetails } from "./TaskDetails";
 import { EmbeddingRagPanel } from "./EmbeddingRagPanel";
 import { VoicePanel } from "./VoicePanel";
 import { ComputePanel } from "./ComputePanel";
+import { TranscriptResult } from "./TranscriptResult";
 import {
   jobSchema,
   aiJobSchema,
@@ -103,6 +104,9 @@ function Details({
         ["image_processing", "이미지 검사·썸네일·미리보기 생성 중"],
         ["voice_reference_validation", "참조 음성 검증·정규화 중"],
         ["tts_loading_and_synthesis", "목소리 모델 로딩·음성 생성 중"],
+        ["stt_probing", "음성 정보·길이 확인 중"],
+        ["stt_normalizing", "음성 인식용 입력 변환 중"],
+        ["stt_transcribing", "음성 모델 로딩·텍스트 인식 중"],
         [
           "waiting_native_compute",
           "다른 연산이 자원을 사용 중입니다. 종료 확인 후 시작합니다.",
@@ -353,9 +357,13 @@ function Details({
                 />
               </>
             )}
+            {job.kind === "stt.transcribe" && (
+              <TranscriptResult jobId={job.id} />
+            )}
             {!artifact.success &&
               !videoPackage.success &&
               !imagePackage.success &&
+              job.kind !== "stt.transcribe" &&
               job.result !== null &&
               job.result !== undefined && (
                 <pre className="json-result">
@@ -363,7 +371,9 @@ function Details({
                 </pre>
               )}
             <a className="button" href={`/api/jobs/${job.id}/result`} download>
-              {imagePackage.success || videoPackage.success
+              {imagePackage.success ||
+              videoPackage.success ||
+              job.kind === "stt.transcribe"
                 ? "전체 ZIP 다운로드"
                 : "결과 다운로드"}
             </a>
@@ -421,6 +431,12 @@ function NewTask({
   const [prompt, setPrompt] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [seconds, setSeconds] = useState(retryJob?.options?.seconds ?? 0);
+
+  const [language, setLanguage] = useState(
+    retryJob?.options?.language ?? "auto",
+  );
+
+  const [useItn, setUseItn] = useState(retryJob?.options?.use_itn ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [key] = useState(crypto.randomUUID());
@@ -492,7 +508,12 @@ function NewTask({
                     extension: file.name.split(".").pop()?.toLowerCase(),
                   }
                 : { type: service.input_type },
-            options: kind === "image.package" ? {} : { seconds },
+            options:
+              kind === "image.package"
+                ? {}
+                : kind === "stt.transcribe"
+                  ? { language, use_itn: useItn }
+                  : { seconds },
           }),
         ),
       );
@@ -571,7 +592,11 @@ function NewTask({
               ref={titleInput}
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="예: 소개 영상 미리보기 생성"
+              placeholder={
+                kind === "stt.transcribe"
+                  ? "예: 회의 음성 인식"
+                  : "예: 소개 영상 미리보기 생성"
+              }
             />
           </label>
         )}
@@ -608,7 +633,11 @@ function NewTask({
         )}
         {service?.input_type === "upload" && (
           <label>
-            {kind === "image.package" ? "입력 이미지" : "입력 영상"}
+            {kind === "image.package"
+              ? "입력 이미지"
+              : kind === "stt.transcribe"
+                ? "입력 음성·영상"
+                : "입력 영상"}
             <input
               key={kind}
               disabled={submitted}
@@ -617,7 +646,9 @@ function NewTask({
               accept={
                 kind === "image.package"
                   ? ".png,.jpg,.jpeg,.jfif,.gif,.webp,.bmp,.ico,.tif,.tiff,.heic,.heif,.avif"
-                  : "video/mp4,video/quicktime,video/webm,video/x-matroska"
+                  : kind === "stt.transcribe"
+                    ? ".wav,.mp3,.flac,.ogg,.m4a,.mp4,.mov,.webm,.mkv,.aac,.aiff"
+                    : "video/mp4,video/quicktime,video/webm,video/x-matroska"
               }
               onChange={(event) => setFile(event.target.files?.item(0) ?? null)}
             />
@@ -637,11 +668,57 @@ function NewTask({
             />
           </label>
         )}
+        {kind === "stt.transcribe" && (
+          <>
+            <label>
+              인식 언어
+              <select
+                aria-label="인식 언어"
+                disabled={submitted}
+                value={language}
+                onChange={(event) => setLanguage(event.target.value)}
+              >
+                {[
+                  ["auto", "자동 감지"],
+                  ["ko", "한국어"],
+                  ["en", "영어"],
+                  ["ja", "일본어"],
+                  ["zh", "중국어"],
+                  ["yue", "광둥어"],
+                ].map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              숫자·문장 표기
+              <select
+                aria-label="숫자·문장 표기"
+                disabled={submitted}
+                value={useItn ? "on" : "off"}
+                onChange={(event) => setUseItn(event.target.value === "on")}
+              >
+                <option value="on">표기 정규화 사용</option>
+                <option value="off">표기 정규화 끄기</option>
+              </select>
+            </label>
+          </>
+        )}
       </div>
       {kind === "image.package" && (
         <p>
           이미지 최대 32MB·4천만 화소. 첫 프레임을 사용하고 원본은 결과에
           포함하지 않습니다.
+        </p>
+      )}
+      {kind === "stt.transcribe" && (
+        <p>
+          음성 또는 음성이 포함된 영상의 첫 오디오 트랙을 인식합니다.
+          {service?.limits &&
+            ` 최대 ${service.limits.max_duration_seconds / 60}분 · 처리 제한 ${service.limits.timeout_seconds / 60}분 · CPU ${service.limits.cpu_threads}스레드.`}
+          결과는 텍스트와 구간별 시각이며, 입력은 작업 종료 후 정리됩니다.
         </p>
       )}
       <p>웹 테스트 결과는 생성 완료 후 24시간 보관됩니다.</p>

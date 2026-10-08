@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import zipfile
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID
@@ -23,6 +24,13 @@ from test_jobs import new_job
         "video.package",
         "image.package",
         "platform",
+        pytest.param(
+            "stt.transcribe",
+            marks=pytest.mark.skipif(
+                os.environ.get("RUN_STT_SMOKE") != "1",
+                reason="Requires the pinned native STT runtime and models",
+            ),
+        ),
         pytest.param(
             "videotoolbox",
             marks=pytest.mark.skipif(
@@ -52,11 +60,20 @@ def test_worker_process_calls_api_and_finishes(app, kind):
         client = platform(app)
         job_id = create(client).json()["id"]
     else:
+        if kind == "stt.transcribe":
+            app.state.settings = replace(app.state.settings, stt_enabled=True)
         client, _ = login(app)
-        job_id = new_job(client, kind=kind).json()["id"]
+        if kind == "stt.transcribe":
+            from test_stt import create_stt
+
+            job_id = create_stt(client).json()["id"]
+        else:
+            job_id = new_job(client, kind=kind).json()["id"]
     prefix = "/api/v1" if is_platform else "/api"
     source = app.state.storage.root / "sample.mp4"
-    if kind == "image.package":
+    if kind == "stt.transcribe":
+        source.write_bytes(Path("models/stt/test_wavs/ko.wav").read_bytes())
+    elif kind == "image.package":
         from PIL import Image
 
         Image.new("RGBA", (1800, 1200), (20, 90, 60, 100)).save(source, format="PNG")
@@ -106,6 +123,7 @@ def test_worker_process_calls_api_and_finishes(app, kind):
         PLATFORM_OIDC_REDIRECT_URI="https://testserver/auth/callback",
         PYTHONPATH=str(Path("src").resolve()),
         FFMPEG_VIDEO_ENCODER="auto" if automatic else encoder,
+        STT_ENABLED="1" if kind == "stt.transcribe" else "0",
     )
     process = subprocess.Popen(
         [sys.executable, "-m", "noedaeri.worker"],
@@ -133,6 +151,33 @@ def test_worker_process_calls_api_and_finishes(app, kind):
                 assert response.status_code == 200
                 app.state.storage.cleanup(app.state.db)
                 assert client.get(f"{prefix}/jobs/{job_id}/result").status_code == 410
+        elif kind == "stt.transcribe":
+            result = job["result"]
+            assert result["type"] == "stt_transcribe"
+            assert result["segment_count"] >= 1
+            assert result["peak_memory_bytes"] > 0
+            assert job["output_reserved"] == 0
+            base = f"/api/jobs/{job_id}/files/"
+            transcript = client.get(base + "transcript.json").json()
+            assert "편할" in transcript["text"]
+            assert all(0 <= row["start"] < row["end"] <= 4.608 for row in transcript["segments"])
+            assert client.get(base + "transcript.txt").text.strip() == transcript["text"]
+            archive = zipfile.ZipFile(io.BytesIO(client.get(f"/api/jobs/{job_id}/result").content))
+            assert set(archive.namelist()) == {"transcript.json", "transcript.txt"}
+            assert client.get(base + "audio.wav").status_code == 404
+            tasks = client.get("/api/tasks?service=stt").json()
+            assert any(row["id"] == job_id for row in tasks)
+            app.state.storage.cleanup(app.state.db)
+            assert not (settings.storage_root / "uploads" / job_id).exists()
+            login(app)
+            assert client.get(base + "transcript.json").status_code == 404
+            with app.state.db.connect() as conn:
+                conn.execute(
+                    "UPDATE jobs SET expires_at=now()-interval '1 second' WHERE id=%s",
+                    (UUID(job_id),),
+                )
+            app.state.storage.cleanup(app.state.db)
+            assert not (settings.storage_root / "results" / job_id).exists()
         elif kind == "image.package":
             result = job["result"]
             assert result["type"] == "image_package"

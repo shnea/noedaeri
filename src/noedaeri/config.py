@@ -40,6 +40,10 @@ class Settings:
     n8n_ai_webhook_url: str = ""
     n8n_compute_context_ready: bool = False
     tts_enabled: bool = False
+    stt_enabled: bool = False
+    stt_timeout: int = 900
+    stt_max_duration: int = 3600
+    stt_threads: int = 4
     tts_timeout: int = 600
     native_wait: int = 600
     tts_memory_limit: int = 6 * 1024**3
@@ -59,6 +63,10 @@ class Settings:
             or os.environ.get("SERVICE_STORAGE_MOUNT_ROOT")
             else None,
             tts_enabled=os.environ.get("TTS_ENABLED", "0") == "1",
+            stt_enabled=os.environ.get("STT_ENABLED", "0") == "1",
+            stt_timeout=int(os.environ.get("STT_TIMEOUT_SECONDS", "900")),
+            stt_max_duration=int(os.environ.get("STT_MAX_DURATION_SECONDS", "3600")),
+            stt_threads=int(os.environ.get("STT_CPU_THREADS", "4")),
             native_wait=int(os.environ.get("NATIVE_COMPUTE_WAIT_SECONDS", "600")),
             tts_timeout=int(os.environ.get("TTS_TIMEOUT_SECONDS", "600")),
             tts_memory_limit=int(os.environ.get("TTS_MEMORY_LIMIT_BYTES", str(6 * 1024**3))),
@@ -120,6 +128,12 @@ class Settings:
             raise ValueError("Invalid TTS execution limits")
         if not 1 <= settings.native_wait <= 3600:
             raise ValueError("Invalid native compute wait limit")
+        if not (
+            30 <= settings.stt_timeout <= 7200
+            and 1 <= settings.stt_max_duration <= 14400
+            and 1 <= settings.stt_threads <= 8
+        ):
+            raise ValueError("Invalid STT execution limits")
         if settings.voice_root.is_relative_to(settings.storage_root):
             raise ValueError("Voice profiles must be outside temporary storage")
         if settings.voice_mount_root and not settings.voice_root.is_relative_to(

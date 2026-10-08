@@ -1,6 +1,65 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 19 · 기준일: 2026-10-09
+문서 버전: 20 · 기준일: 2026-10-09
+
+## STT · 음성 인식
+
+`stt.transcribe`는 설치된 SenseVoiceSmall INT8 + sherpa-onnx 1.13.8 + Silero VAD를
+네이티브 CPU 프로세스로 실행한다. 기존 공통 Job·최상위 연산 1개·점유 갱신·취소·결과 보존·
+플랫폼 서명 완료 웹훅을 사용한다. 모델은 작업마다 로딩하고 프로세스 종료 시 해제한다.
+이 기능에는 n8n 단계가 필요 없어 직접 실행한다. 플랫폼 STT 어댑터는 추후 플랫폼에서 구현한다.
+
+| 항목 | 계약 |
+|---|---|
+| 인증·접수 | 플랫폼 서버 `X-Noedaeri-API-Key`로 `POST /api/v1/jobs`. 브라우저는 승인된 세션·CSRF |
+| 입력 | `input: {"type":"upload"}`. 접수 후 `PUT /api/v1/jobs/{id}/input`에 원본 바이너리 전송 |
+| 지원 입력 | WAV·MP3·FLAC·OGG·M4A/MP4/MOV·WebM/MKV·AAC·AIFF의 첫 오디오 트랙. 재생 목록·외부 참조 불가 |
+| 옵션 | `language`: `auto`(기본)/`ko`/`en`/`ja`/`zh`/`yue`. `use_itn`: boolean(기본 true, 숫자·문장 표기 정규화). 다른 필드 422 |
+| 한도 | 업로드 공통 5GiB. 음성 기본 3,600초. 전처리·로딩·인식·묶음 총 900초. 공통 자원 대기 기본 600초는 별도 |
+| 실행 설정 | 암호화 env의 `STT_ENABLED`, `STT_MAX_DURATION_SECONDS`, `STT_TIMEOUT_SECONDS`, `STT_CPU_THREADS`(기본 4). 길이 1–14,400초·처리 30–7,200초·스레드 1–8. `/services`의 `limits`에서 현재 값 조회 |
+| 내부 입력 | 16kHz mono PCM. 작은 블록으로 파일을 읽고 VAD 구간 최대 30초. JSON 최대 4MiB·최대 20,000구간. PCM과 결과 공간도 공통 예약 |
+| 결과 | `/api/v1/jobs/{id}/result`: `transcript.zip`(JSON + TXT). `/files/transcript.json`·`/files/transcript.txt`도 제공. 원본·PCM은 결과에 없음 |
+| 완료 알림 | 기존 `job.succeeded`/`job.failed`/`job.cancelled` 웹훅. `result_path`·`job.result.files` 사용. 플랫폼은 다운로드·저장 후 기존 `receipt`. 반복 조회로 완료를 기다리지 않음 |
+| 보존 | 웹 결과 완료 후 24시간. 플랫폼은 저장 확인 또는 플랫폼 TTL(기본 7일). 이력·만료 상태 유지. 원본·중간 파일은 작업 종료 후 정리 |
+| 멱등성·복구 | 같은 UUID·kind·title·input·options로만 재접수. 변경하면 409. 다운로드 실패 시 동일 결과 경로로 제한적 재시도·TTL 확인. 종료 불확실 작업 자동 중복 실행 금지 |
+| 실패 | 비활성 접수 503 `stt_not_configured`. 실행 `stt_transcription_failed`, 길이 `stt_duration_exceeded`, 결과 `stt_result_too_large`, 처리 `processing_timeout`, 자원 대기 `compute_wait_timeout`. 무음은 성공·빈 텍스트/구간 |
+| 웹 | 서비스의 STT 작업 만들기 → 공통 새 작업의 파일·언어 선택 → 작업 목록의 상태·취소·텍스트/JSON/ZIP. 긴 결과는 50구간씩 표시 |
+
+```json
+{
+  "kind": "stt.transcribe",
+  "title": "회의 음성 인식",
+  "idempotency_key": "<요청 UUID>",
+  "input": {"type": "upload"},
+  "options": {"language": "ko", "use_itn": true}
+}
+```
+
+접수 응답은 기존 Job 스키마(`id`, `status: "uploading"` 등)다. 완료 `job.result`에는
+`type: "stt_transcribe"`, `model`, `provider: "cpu"`, 요청한 `language`, `use_itn`,
+`duration_seconds`, `segment_count`, `timing: "vad_segments"`, `files`, `elapsed_seconds`,
+`peak_memory_bytes`가 들어간다. `language: "auto"`는 요청값이며 실제 감지 언어 필드가 아니다.
+전체 텍스트는 이력·웹훅에 넣지 않는다. `transcript.json`은 다음 형태다.
+
+```json
+{
+  "version": 1,
+  "model": "SenseVoiceSmall INT8",
+  "language": "ko",
+  "use_itn": true,
+  "timing": "vad_segments",
+  "duration_seconds": 4.608,
+  "sample_rate": 16000,
+  "text": "<인식한 텍스트>",
+  "segments": [{"start": 0.806, "end": 3.692, "text": "<인식한 구간>"}]
+}
+```
+
+시각은 원본 타임라인 기준 초 단위의 **VAD 경계**다. 단어 정렬·자막 큐·화자 구분·번역·
+실시간 스트리밍 STT를 제공하지 않는다. 한국어 띄어쓰기와 고유명사는 모델 출력 오류가 있을 수
+있으므로 사용자 녹음 품질을 검수한다. STT 입력·테스트 결과는 `tmp/` 정책을 따르며 전용 영속
+데이터를 아직 만들지 않아 NAS 보존 폴더를 추가하지 않는다.
+설치·해시·검수 범위: [STT 런타임 기록](https://github.com/shnea/noedaeri/blob/main/docs/STT_RUNTIME.md).
 
 ## 현재 검수와 플랫폼 반영 순서
 
@@ -25,7 +84,7 @@
 
 ## 공통 연산 자원 배정 · 2026-10-09
 
-파일·TTS·Raya·임베딩·벡터 검색·문서 색인·n8n AI 워크플로가 공통 자원 예약을 거칩니다.
+파일·TTS·STT·Raya·임베딩·벡터 검색·문서 색인·n8n AI 워크플로가 공통 자원 예약을 거칩니다.
 현재 최상위 연산 동시 실행 수는 **1**입니다. DB 작업 종류별 접수 API와 기존 동기 응답은
 유지하고, 자원 배정 준비가 된 예약을 등록 순서로 실행합니다. 파일 업로드·결과 다운로드·
 상태 조회·웹훅 전송은 연산 슬롯을 점유하지 않습니다. n8n 안에서 뇌대리 밖으로 직접 보낸
@@ -125,6 +184,7 @@ Raya·임베딩·벡터 검색 HTTP 노드의 `X-Noedaeri-Compute-Token` 헤더�
 |---|---|---|
 | 목소리 등록·관리 | `/api/v1/voices` | 기본 목소리·참조 음성 등록, 조회·이름 수정·삭제, 요청자 범위 확인 |
 | 음성 생성 | `tts.synthesize` | Qwen3-TTS 1.7B 8bit, Job 큐·WAV·서명 완료 알림·웹 테스트 |
+| 음성 인식 | `stt.transcribe` | SenseVoice INT8·Silero VAD·텍스트/구간 JSON/ZIP·Job·서명 완료 알림·웹 테스트 |
 | 이미지 통합 처리 | `image.package` | JPEG 썸네일·WebP 미리보기·ZIP 생성 가능 |
 | 영상 썸네일 | `video.thumbnail` | 웹 요청·결과 다운로드 가능 |
 | 통합 영상 처리 | `video.package` | 썸네일·해상도별 HLS·ZIP 생성 가능 |
@@ -156,7 +216,7 @@ Raya·임베딩·벡터 검색 HTTP 노드의 `X-Noedaeri-Compute-Token` 헤더�
 
 응답은 최신 요청부터 정렬한 배열이다. 항목은 `id`, `source`, `title`, `kind`, `service`, `label`, `status`, `owner_id`, `origin`, `executor`, `created_at`, `data`를 가진다. `source`는 `media`, `ai`, `indexing`, `operation`이며 `data`는 해당 종류의 상세다. 서로 다른 종류의 작업을 합친 다음 필터·정렬·페이지 한도를 적용한다. 승인 전·철회된 사용자는 조회할 수 없으며 인증 실패는 기존 HTTP 오류 계약을 따른다.
 
-`GET /api/v1/services`와 웹 `/api/services`는 이미지·영상·TTS뿐 아니라 n8n AI, Raya, 임베딩, 색인, 검색을 함께 제공한다. 기존 `kind`, `service`, `label`, `input_type`에 `interface`, `available`, `task_types`를 추가한다. `available`은 필요한 연결 설정의 존재를 나타내며 실제 서비스 연결 검수를 대신하지 않는다. AI 서비스 항목은 미디어 워커의 `POST /api/v1/jobs` 입력으로 사용할 수 없으며 기존 AI 실행 API를 사용한다.
+`GET /api/v1/services`와 웹 `/api/services`는 이미지·영상·TTS·STT뿐 아니라 n8n AI, Raya, 임베딩, 색인, 검색을 함께 제공한다. 기존 `kind`, `service`, `label`, `input_type`에 `interface`, `available`, `task_types`를 추가한다. `available`은 필요한 연결 설정의 존재를 나타내며 실제 서비스 연결 검수를 대신하지 않는다. AI 서비스 항목은 미디어 워커의 `POST /api/v1/jobs` 입력으로 사용할 수 없으며 기존 AI 실행 API를 사용한다.
 
 직접 임베딩·검색·Raya API는 기존 동기 응답을 유지하면서 `operation` 실행 이력을 남긴다. 임베딩 벡터·검색 본문은 원래 API 응답으로 반환하고 이력에는 생성 수·차원·검색 건수 등 요약만 저장한다. 요약은 웹 완료 후 24시간, 플랫폼은 설정된 플랫폼 결과 보관 기간 후 지우며 작업 이력은 유지한다. 만료한 요약은 통합 조회에서도 반환하지 않는다. 요청 실패는 실패 이력, 실행 종료를 확인할 수 없는 중단은 확인 필요 상태로 기록한다. 실행 중 직접 호출의 취소·자동 재시도·완료 웹훅은 제공하지 않는다. 입력 검증·인증 실패를 무조건 재실행하지 않는다.
 
@@ -865,7 +925,7 @@ if (job.status === 'uploading') {
 | 메서드·경로 | 계약 |
 |---|---|
 | `GET /api/v1/services` | 지원 종류·옵션 스키마 |
-| `POST /api/v1/jobs` | 앞의 웹 요청과 같은 JSON. 종류는 image.package / video.thumbnail / video.package. `callback_url` 등 미정 필드는 422 |
+| `POST /api/v1/jobs` | 앞의 웹 요청과 같은 JSON. 종류는 image.package / video.thumbnail / video.package / tts.synthesize / stt.transcribe. 목소리 등록은 전용 voices API 사용. `callback_url` 등 미정 필드는 422 |
 | `PUT /api/v1/jobs/{id}/input` | 원본 바이트. 같은 업로드 한도 적용 |
 | `GET /api/v1/jobs/{id}` | 개별 상태·결과 manifest·`terminal_event_id`·`delivery`·`received_at` |
 | `GET /api/v1/jobs?limit=100` | 최근 플랫폼 작업, 최대 100개. 대량 목록 복구 대신 자체 저장 ID 사용 |
@@ -971,7 +1031,7 @@ JSON 재직렬화 후 서명을 계산하지 않습니다. 서명을 constant-ti
 
 ## 대용량 입력과 플랫폼 복구 책임
 
-공통 작업 입력 업로드 한도는 **5GiB (5,368,709,120바이트)**입니다. 영상·첨부 원본을 플랫폼이 저장하는 한도도 플랫폼에서 같은 값으로 설정해야 합니다. 뇌대리는 일반 첨부 저장소가 아니며 등록된 image.package/video.thumbnail/video.package 종류만 처리합니다. 이미지 디코딩은 별도의 32MB 한도를 유지해 큰 이미지의 자원 폭증을 막습니다. 업로드 허용이 모든 종류의 변환 성공을 의미하지 않습니다.
+공통 작업 입력 업로드 한도는 **5GiB (5,368,709,120바이트)**입니다. 영상·첨부 원본을 플랫폼이 저장하는 한도도 플랫폼에서 같은 값으로 설정해야 합니다. 뇌대리는 일반 첨부 저장소가 아니며 등록된 연산 종류만 처리합니다. 파일 입력 작업에는 이미지·영상·목소리 등록·STT가 있으며 종류별 검증 한도를 적용합니다. 이미지 디코딩은 별도의 32MB 한도를 유지해 큰 이미지의 자원 폭증을 막습니다. 업로드 허용이 모든 종류의 변환 성공을 의미하지 않습니다.
 
 기본 임시 총량은 20GiB이고 UPLOAD_MAX_BYTES/STORAGE_MAX_BYTES로 설정합니다. 실제 디스크 여유·입력 및 출력 예약 검사를 통과해야 접수합니다. 로컬 nginx 한도도 같은 설정을 사용합니다. 외부 Nginx Proxy Manager·플랫폼 업로드 프록시에는 5GiB 이상의 client_max_body_size와 대용량 전송에 맞는 제한시간을 별도로 적용해야 합니다. 원본 전송의 바이트 위치부터 재개는 지원하지 않습니다.
 

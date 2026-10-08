@@ -21,7 +21,13 @@ export const jobSchema = z.object({
     .optional(),
   retry_of: z.string().nullable().optional(),
   output_reserved: z.number().optional(),
-  options: z.object({ seconds: z.number().optional() }).optional(),
+  options: z
+    .object({
+      seconds: z.number().optional(),
+      language: z.string().optional(),
+      use_itn: z.boolean().optional(),
+    })
+    .optional(),
   id: z.string(),
   title: z.string(),
   kind: z.string(),
@@ -42,6 +48,14 @@ export const jobSchema = z.object({
 });
 
 export const serviceSchema = z.object({
+  limits: z
+    .object({
+      max_duration_seconds: z.number(),
+      timeout_seconds: z.number(),
+      cpu_threads: z.number(),
+    })
+    .nullable()
+    .optional(),
   unavailable_reason: z.string().nullable().optional(),
   kind: z.string(),
   service: z.string(),
@@ -317,6 +331,14 @@ const messages = new Map(
     unsupported_media: "지원 형식과 입력 길이를 확인해 주세요.",
     tts_not_configured:
       "TTS 설치와 연결 설정이 필요합니다. 관리자에게 확인해 주세요.",
+    stt_not_configured:
+      "STT 엔진 설치·활성화가 필요합니다. 관리자에게 확인해 주세요.",
+    stt_transcription_failed:
+      "음성 인식에 실패했습니다. 지원 형식과 입력 상태를 확인해 주세요.",
+    stt_duration_exceeded:
+      "음성 길이가 STT 한도를 초과했습니다. 파일을 나누어 요청해 주세요.",
+    stt_result_too_large:
+      "인식 결과가 한도를 초과했습니다. 파일을 나누어 요청해 주세요.",
     tts_generation_failed:
       "음성 생성에 실패했습니다. 입력을 줄여 다시 시도해 주세요.",
     tts_memory_unavailable:

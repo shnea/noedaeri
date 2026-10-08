@@ -1,0 +1,5 @@
+[project]
+name = "noedaeri-stt-runtime"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["sherpa-onnx==1.13.8", "sherpa-onnx-core==1.13.8", "soundfile==0.13.1", "numpy==2.4.4"]

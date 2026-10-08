@@ -78,6 +78,28 @@ raya_runtime/.venv/bin/python scripts/install_raya.py
 
 ## 검사
 
+### STT 설치와 음성 인식
+
+```sh
+uv sync --project stt_runtime --locked --python 3.12
+python3 scripts/install_stt.py
+```
+
+SenseVoiceSmall INT8·Silero VAD를 고정 해시로 설치하고 sherpa-onnx/core 1.13.8을 별도
+Python 3.12 환경에서 실행한다. 암호화 운영 설정의 `STT_ENABLED=1`을 적용하고 API·워커를
+재시작한다. 기본 음성 길이 1시간·처리 15분·CPU 4스레드를 설정 가능하게 제공한다.
+서비스 목록의 STT **작업 만들기** 또는 **작업 → 새 작업**에서 음성·영상 파일과 언어를 선택한다.
+모든 실행은 공통 Job과 연산 슬롯을 사용한다. 완료 후 텍스트·구간 JSON·ZIP을 제공하며
+웹 결과는 24시간 보관한다. 화자 구분·단어 정렬·자막 생성은 후속 범위다.
+
+```sh
+RUN_STT_SMOKE=1 .venv/bin/python scripts/check.py
+node scripts/ui-stt-check.cjs
+```
+
+설치·모델 출처·라이선스·실행 검수와 보존 범위는 [STT 기록](docs/STT_RUNTIME.md),
+플랫폼 접수·완료 웹훅·결과 수령 계약은 [연동 지침](docs/SERVICE_INTEGRATION.md)을 따른다.
+
 ### TTS 설치와 목소리
 
 Apple Silicon에서 Qwen3-TTS 1.7B 8bit를 별도 MLX 환경으로 실행한다. 기본 목소리는 CustomVoice,

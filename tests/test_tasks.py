@@ -81,6 +81,7 @@ def test_catalog_contains_every_implemented_service_and_configuration_state(app)
         "tts.voice.register",
         "video.package",
         "video.thumbnail",
+        "stt.transcribe",
         "ai.workflow",
         "raya.route",
         "embedding.encode",
@@ -96,6 +97,7 @@ def test_catalog_contains_every_implemented_service_and_configuration_state(app)
         gemini_api_key="fixture-key",
         raya_enabled=True,
         tts_enabled=True,
+        stt_enabled=True,
     )
     rows = {row["kind"]: row for row in client.get("/api/services").json()}
     assert all(row["available"] for row in rows.values())

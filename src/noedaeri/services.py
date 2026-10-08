@@ -39,6 +39,12 @@ class ImageOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class TranscriptionOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    language: Literal["auto", "ko", "en", "ja", "zh", "yue"] = "auto"
+    use_itn: bool = True
+
+
 class SpeechInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     type: Literal["text"]
@@ -84,6 +90,13 @@ class Service:
 
 
 SERVICES = {
+    "stt.transcribe": Service(
+        "stt.transcribe",
+        "stt",
+        "음성 인식 · 텍스트 + 구간 시각",
+        "upload",
+        TranscriptionOptions,
+    ),
     "tts.synthesize": Service(
         "tts.synthesize",
         "tts",
@@ -152,7 +165,16 @@ def service_catalog(settings):
             "input_type": item.input_type,
             "options_schema": item.options.model_json_schema(),
             "interface": "tts" if item.service == "tts" else "media",
-            "available": settings.tts_enabled if item.service == "tts" else True,
+            "available": settings.tts_enabled
+            if item.service == "tts"
+            else (settings.stt_enabled if item.service == "stt" else True),
+            "limits": {
+                "max_duration_seconds": settings.stt_max_duration,
+                "timeout_seconds": settings.stt_timeout,
+                "cpu_threads": settings.stt_threads,
+            }
+            if item.service == "stt"
+            else None,
         }
         for item in SERVICES.values()
     ]

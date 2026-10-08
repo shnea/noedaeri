@@ -72,6 +72,11 @@ class Finish(Lease):
             "tts_memory_unavailable",
             "voice_sample_missing",
             "voice_storage_unavailable",
+            "compute_wait_timeout",
+            "stt_not_configured",
+            "stt_transcription_failed",
+            "stt_duration_exceeded",
+            "stt_result_too_large",
         ]
         | None
     ) = None
@@ -436,6 +441,8 @@ def create_app(settings: Settings | None = None):
             raise HTTPException(422, "voice_registration_endpoint_required")
         if service.service == "tts" and not getattr(app.state, "settings", settings).tts_enabled:
             raise HTTPException(503, "tts_not_configured")
+        if service.service == "stt" and not getattr(app.state, "settings", settings).stt_enabled:
+            raise HTTPException(503, "stt_not_configured")
         try:
             options = service.options.model_validate(data.options).model_dump(mode="json")
         except ValidationError:
@@ -601,9 +608,16 @@ def create_app(settings: Settings | None = None):
         ):
             raise HTTPException(410, "result_unavailable")
         service = SERVICES[job["kind"]]
-        if job["kind"] in {"video.package", "image.package"}:
+        if job["kind"] in {"video.package", "image.package", "stt.transcribe"}:
             manifest = job["result"] or {}
-            name = filename or ("image.zip" if job["kind"] == "image.package" else "video.zip")
+            name = (
+                filename
+                or {
+                    "image.package": "image.zip",
+                    "video.package": "video.zip",
+                    "stt.transcribe": "transcript.zip",
+                }[job["kind"]]
+            )
             if name not in manifest.get("files", []):
                 raise HTTPException(404, "result_missing")
             try:
@@ -618,6 +632,7 @@ def create_app(settings: Settings | None = None):
                 ".jpg": "image/jpeg",
                 ".webp": "image/webp",
                 ".json": "application/json",
+                ".txt": "text/plain; charset=utf-8",
                 ".zip": "application/zip",
             }.get(path.suffix)
             return FileResponse(
@@ -740,7 +755,7 @@ def create_app(settings: Settings | None = None):
             if not job:
                 raise HTTPException(404, "job_not_found")
             service = SERVICES[job["kind"]]
-            if job["kind"] in {"video.package", "image.package"}:
+            if job["kind"] in {"video.package", "image.package", "stt.transcribe"}:
                 if not isinstance(result_data, dict) or result_data.get("type") != job[
                     "kind"
                 ].replace(".", "_"):
@@ -749,6 +764,8 @@ def create_app(settings: Settings | None = None):
                 required = (
                     {"thumbnail.jpg", "preview.webp", "metadata.json", "image.zip"}
                     if job["kind"] == "image.package"
+                    else {"transcript.json", "transcript.txt", "transcript.zip"}
+                    if job["kind"] == "stt.transcribe"
                     else {"master.m3u8", "thumbnail.jpg", "video.zip"}
                 )
                 if (
