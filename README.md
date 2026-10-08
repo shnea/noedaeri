@@ -87,6 +87,8 @@ npm run build --prefix web
 
 DB 검사는 로컬 소켓만 사용하는 일회성 PostgreSQL을 띄운 뒤 삭제한다. 실제 FFmpeg 영상 생성·썸네일 출력, 워커 HTTP 실행, 멱등성·권한·점유·취소·만료 처리를 검사한다. UI 검사는 Playwright 설치 환경에서 `node scripts/ui-check.cjs`로 실행하며 개발 서버가 필요하다. UI 검사의 여러 서비스는 명시된 가상 데이터이며 실제 구현 서비스 목록이 아니다.
 
+관리 화면의 ‘작업’은 파일·AI·색인·직접 연산 이력을 통합하며 서비스·상태 필터와 페이지 이동을 제공한다. 토큰 사용량과 임베딩·RAG는 별도 목적의 화면으로 유지한다. 통합 조회·권한·등록부는 `tests/test_tasks.py`, 화면 경로는 `node scripts/ui-tasks-check.cjs`로 검사한다. 직접 연산의 기존 동기 응답은 유지하며 요약 이력을 기록한다. 전역 실행 큐·자원 배정의 통합은 후속 작업이다.
+
 `web/tools/oxlint/anti-slop`은 프로젝트에 보관한 원본 플러그인이다. 원본 출처와 의도적인 변경 사항은 해당 디렉터리의 UPSTREAM.md에 기록한다.
 
 플랫폼 이관 준비 상태는 [기능 대응표](docs/PLATFORM_COMPATIBILITY.md), 다음 주부터 진행할 전체 순서는 [다음 작업표](docs/NEXT_WORK.md)를 참고한다.

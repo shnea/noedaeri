@@ -46,6 +46,13 @@ export const serviceSchema = z.object({
   service: z.string(),
   label: z.string(),
   input_type: z.string(),
+  interface: z
+    .enum(["media", "ai", "raya", "embedding", "indexing", "search"])
+    .default("media"),
+  available: z.boolean().default(true),
+  task_types: z
+    .array(z.object({ value: z.string(), label: z.string() }))
+    .default([]),
 });
 
 export const memberSchema = z.object({
@@ -111,7 +118,7 @@ export const aiUsageResponseSchema = z.object({
 });
 
 export const embeddingResponseSchema = z.object({
-  object: z.string(),
+  object: z.string().optional(),
   model: z.string(),
   data: z.array(
     z.object({
@@ -174,6 +181,41 @@ export const vectorSearchResponseSchema = z.object({
   matched_count: z.number(),
   results: z.array(vectorSearchResultItemSchema),
 });
+
+const taskBaseSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  kind: z.string(),
+  service: z.string(),
+  label: z.string(),
+  status: z.string(),
+  owner_id: z.string(),
+  origin: z.string(),
+  executor: z.string(),
+  created_at: z.string(),
+});
+
+const operationSchema = z.object({
+  finished_at: z.string().nullable(),
+  expires_at: z.string().nullable(),
+  error_code: z.string().nullable(),
+  result: z.json().nullable(),
+});
+
+export const taskSchema = z.discriminatedUnion("source", [
+  taskBaseSchema.extend({ source: z.literal("media"), data: jobSchema }),
+  taskBaseSchema.extend({ source: z.literal("ai"), data: aiJobSchema }),
+  taskBaseSchema.extend({
+    source: z.literal("indexing"),
+    data: indexingJobSchema,
+  }),
+  taskBaseSchema.extend({
+    source: z.literal("operation"),
+    data: operationSchema,
+  }),
+]);
+
+export type Task = z.infer<typeof taskSchema>;
 
 export type User = z.infer<typeof userSchema>;
 

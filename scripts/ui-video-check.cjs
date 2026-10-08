@@ -1,3 +1,4 @@
+const { mediaTasks } = require('./ui-fixtures.cjs');
 // Synthetic media and identity only; never operates a production session.
 const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
@@ -19,7 +20,7 @@ const path = require('node:path');
         if (!result.files.includes(name)) return route.fulfill({status:404});
         return route.fulfill({body:await fs.readFile(path.join('tmp/ui-video',name)),contentType:name.endsWith('.m3u8')?'application/vnd.apple.mpegurl':name.endsWith('.ts')?'video/mp2t':'image/jpeg'});
       }
-      const data = url.pathname==='/api/me'?{id:'fixture-user',role:'user',status:'approved',csrf:'fixture'}:url.pathname==='/api/jobs'?[job]:[];
+      const data = url.pathname==='/api/me'?{id:'fixture-user',role:'user',status:'approved',csrf:'fixture'}:url.pathname==='/api/tasks'?mediaTasks([job],route.request().url()):[];
       return route.fulfill({json:data});
     });
     await page.goto('http://127.0.0.1:5173/');

@@ -76,3 +76,66 @@ SERVICES = {
         "image/jpeg",
     ),
 }
+
+AI_TASK_TYPES = {
+    "blog.tags": "블로그 태그 생성",
+    "blog.summary": "블로그 요약",
+    "article.draft": "글 초안 작성",
+    "portfolio.search": "포트폴리오 검색",
+    "ui.render": "UI 생성",
+    "comment.generate": "댓글 생성",
+    "document.analyze": "문서 분석",
+    "code.analyze": "코드 분석",
+    "chat.general": "일반 질답",
+}
+
+
+def service_catalog(settings):
+    """Expose every implemented capability without changing media-job validation."""
+    catalog = [
+        {
+            "kind": item.kind,
+            "service": item.service,
+            "label": item.label,
+            "input_type": item.input_type,
+            "options_schema": item.options.model_json_schema(),
+            "interface": "media",
+            "available": True,
+        }
+        for item in SERVICES.values()
+    ]
+    for kind, service, label, interface, available in (
+        ("ai.workflow", "n8n", "AI 작업 · n8n 워크플로", "ai", bool(settings.n8n_ai_webhook_url)),
+        ("raya.route", "raya", "Raya 요청 난이도 판단", "raya", settings.raya_enabled),
+        (
+            "embedding.encode",
+            "embedding",
+            "텍스트 임베딩 생성",
+            "embedding",
+            bool(settings.gemini_api_key),
+        ),
+        (
+            "indexing.documents",
+            "indexing",
+            "문서 색인 · 추가·교체·삭제",
+            "indexing",
+            bool(settings.gemini_api_key),
+        ),
+        ("indexing.search", "indexing", "벡터 검색 · RAG", "search", bool(settings.gemini_api_key)),
+    ):
+        catalog.append(
+            {
+                "kind": kind,
+                "service": service,
+                "label": label,
+                "input_type": "text" if interface in {"ai", "embedding", "raya"} else "json",
+                "interface": interface,
+                "available": available,
+                "task_types": [
+                    {"value": key, "label": value} for key, value in AI_TASK_TYPES.items()
+                ]
+                if interface == "ai"
+                else [],
+            }
+        )
+    return catalog

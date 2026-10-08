@@ -210,6 +210,41 @@ input {
 input::placeholder {
   color: #596d63;
 }
+textarea {
+  font: inherit;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #9eb6a9;
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--paper);
+  caret-color: var(--green);
+  resize: vertical;
+}
+textarea:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+.wide-field {
+  grid-column: 1 / -1;
+}
+.usage-panel h3 {
+  margin-top: 32px;
+}
+@media (min-width: 761px) and (max-width: 1250px) {
+  header {
+    flex-wrap: wrap;
+    gap: 16px;
+    padding-block: 16px;
+  }
+  nav {
+    order: 3;
+    width: 100%;
+  }
+  nav button {
+    padding-block: 12px;
+  }
+}
 .table-scroll {
   overflow: auto;
   background: white;

@@ -78,6 +78,21 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
 CREATE INDEX IF NOT EXISTS ai_jobs_owner_created ON ai_jobs(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ai_jobs_request ON ai_jobs(project, environment, request_id);
 
+CREATE TABLE IF NOT EXISTS operation_jobs (
+ id uuid PRIMARY KEY,
+ owner_id uuid NOT NULL REFERENCES users(id),
+ kind text NOT NULL,
+ title text NOT NULL,
+ status text NOT NULL DEFAULT 'running'
+ CHECK(status IN ('running','succeeded','failed','interrupted')),
+ result jsonb,
+ error_code text,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ finished_at timestamptz,
+ expires_at timestamptz
+);
+CREATE INDEX IF NOT EXISTS operation_jobs_owner_created ON operation_jobs(owner_id,created_at DESC);
+
 CREATE TABLE IF NOT EXISTS ai_usage (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
  job_id uuid REFERENCES ai_jobs(id) ON DELETE SET NULL,

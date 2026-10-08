@@ -1,3 +1,4 @@
+const { mediaTasks } = require('./ui-fixtures.cjs');
 const {chromium}=require('playwright');
 const fs=require('node:fs/promises');
 const assert=require('node:assert/strict');
@@ -10,7 +11,7 @@ const assert=require('node:assert/strict');
  await page.route('**/api/**',async route=>{
  const path=new URL(route.request().url()).pathname;
  if(path==='/api/jobs'&&route.request().method()==='POST'){payload=route.request().postDataJSON();return route.fulfill({json:{...job,id:'00000000-0000-4000-8000-000000000002',status:'uploading'}});}
- const data=path==='/api/me'?{id:'fixture',role:'admin',status:'approved',csrf:'fixture'}:path==='/api/jobs'?[job]:path==='/api/services'?[{kind:'video.package',service:'ffmpeg',label:'영상 통합 처리',input_type:'upload'}]:[];
+ const data=path==='/api/me'?{id:'fixture',role:'admin',status:'approved',csrf:'fixture'}:path==='/api/tasks'?mediaTasks([job],route.request().url()):path==='/api/services'?[{kind:'video.package',service:'ffmpeg',label:'영상 통합 처리',input_type:'upload'}]:[];
  return route.fulfill({json:data});
  });
  await page.goto('http://127.0.0.1:5173/');

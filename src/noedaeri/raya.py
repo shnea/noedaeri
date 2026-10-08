@@ -292,6 +292,8 @@ class Raya:
 def install_raya_routes(app, settings, auth, raya, db, principal):
     import secrets
 
+    from .tasks import tracked_operation
+
     slots = asyncio.Semaphore(2)
 
     @app.get("/api/admin/raya/status")
@@ -339,6 +341,7 @@ def install_raya_routes(app, settings, auth, raya, db, principal):
             504: {"description": "로딩 포함 추론 제한시간 초과"},
         },
     )
+    @tracked_operation(db, settings, auth, principal, "raya.route", "Raya 요청 난이도 판단")
     async def route(request: Request):
         if request.url.path.startswith("/api/v1/"):
             principal(request)

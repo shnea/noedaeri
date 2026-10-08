@@ -1,11 +1,8 @@
-import json
 from dataclasses import replace
 from uuid import uuid4
-import pytest
-import httpx
-from conftest import login
 
-from noedaeri.ai_jobs import AiJobCreate
+import httpx
+import pytest
 
 
 @pytest.fixture
@@ -24,7 +21,9 @@ def mock_n8n(monkeypatch):
             if "timeout" in str(json):
                 raise httpx.TimeoutException("mock timeout")
             if "fail" in str(json):
-                return httpx.Response(500, request=httpx.Request("POST", url), json={"error": "failed"})
+                return httpx.Response(
+                    500, request=httpx.Request("POST", url), json={"error": "failed"}
+                )
 
             req_id = json.get("request_id", "req-test")
             task_type = json.get("task_type", "chat.general")
@@ -79,6 +78,10 @@ def test_ai_job_sync_execution(app, mock_n8n):
     assert data["status"] == "succeeded"
     assert data["reused"] is False
     assert data["result"]["ai_result"] == "Answer for blog.tags"
+    history = client.get("/api/v1/tasks", headers=headers).json()
+    assert history[0]["source"] == "ai"
+    assert history[0]["id"] == data["id"]
+    assert history[0]["data"]["result"] == data["result"]
 
 
 def test_ai_job_idempotency_and_reused(app, mock_n8n):
@@ -218,5 +221,7 @@ def test_ai_usage_query_and_internal_report(app, mock_n8n):
 def test_ai_job_auth_required(app):
     client = app.state.client
     # Missing key
-    resp = client.post("/api/v1/ai/jobs", json={"request_id": "test", "task_type": "test", "prompt": "test"})
+    resp = client.post(
+        "/api/v1/ai/jobs", json={"request_id": "test", "task_type": "test", "prompt": "test"}
+    )
     assert resp.status_code == 401

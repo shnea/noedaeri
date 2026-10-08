@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import jwt
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -29,8 +29,9 @@ from .execution import execution_lock
 from .integration import PLATFORM_OWNER, Webhooks
 from .queue import Queue
 from .raya import Raya, install_raya_routes
-from .services import SERVICES
+from .services import SERVICES, service_catalog
 from .storage import Storage
+from .tasks import cleanup_operation_results, list_tasks
 
 
 class NewJob(BaseModel):
@@ -154,6 +155,7 @@ def create_app(settings: Settings | None = None):
                 await asyncio.to_thread(webhooks.collect)
                 await asyncio.to_thread(storage.cleanup, db)
                 await asyncio.to_thread(cleanup_indexing_results, db)
+                await asyncio.to_thread(cleanup_operation_results, db)
             except Exception:
                 # Never emit connection strings, stored payloads or credentials to logs.
                 import logging
@@ -224,7 +226,7 @@ def create_app(settings: Settings | None = None):
         return auth.user(request)
 
     install_raya_routes(app, settings, auth, raya, db, principal)
-    install_embedding_routes(app, settings, auth, principal)
+    install_embedding_routes(app, settings, auth, principal, db)
     install_ai_job_routes(app, db, auth, settings)
     install_indexing_routes(app, db, auth, settings)
 
@@ -318,16 +320,18 @@ def create_app(settings: Settings | None = None):
     @app.get("/api/services")
     def services(request: Request):
         principal(request)
-        return [
-            {
-                "kind": item.kind,
-                "service": item.service,
-                "label": item.label,
-                "input_type": item.input_type,
-                "options_schema": item.options.model_json_schema(),
-            }
-            for item in SERVICES.values()
-        ]
+        return service_catalog(getattr(request.app.state, "settings", settings))
+
+    @app.get("/api/v1/tasks")
+    @app.get("/api/tasks")
+    def tasks(
+        request: Request,
+        limit: int = Query(default=100, ge=1, le=100),
+        offset: int = Query(default=0, ge=0, le=1000000),
+        status: str | None = None,
+        service: str | None = None,
+    ):
+        return list_tasks(db, principal(request), present, limit, offset, status, service)
 
     @app.get("/integrations/SERVICE_INTEGRATION.md")
     @app.get("/api/integrations/guide")

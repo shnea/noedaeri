@@ -1,12 +1,12 @@
 """Common AI embedding endpoint backed by Google AI Studio."""
 
-import asyncio
 import secrets
-from typing import Literal
 
 import httpx
 from fastapi import HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from .tasks import tracked_operation
 
 DEFAULT_MODEL = "models/gemini-embedding-001"
 DEFAULT_DIMENSIONS = 768
@@ -88,17 +88,20 @@ async def generate_embeddings(
             return embeddings_list, tokens
 
 
-def install_embedding_routes(app, settings, auth, principal):
+def install_embedding_routes(app, settings, auth, principal, db):
     @app.post(
         "/api/v1/ai/embeddings",
         response_model=EmbeddingResponse,
         summary="공통 텍스트 임베딩 생성 (플랫폼)",
         openapi_extra={
-            "description": "Google Gemini 고성능 임베딩 모델(768차원 등)을 사용해 단일 또는 복수 텍스트의 벡터를 생성합니다."
+            "description": (
+                "Google Gemini 임베딩 모델로 단일 또는 복수 텍스트의 벡터를 생성합니다."
+            )
         },
     )
     @app.post("/api/ai/v1/embeddings", response_model=EmbeddingResponse)
     @app.post("/api/ai/embeddings", response_model=EmbeddingResponse)
+    @tracked_operation(db, settings, auth, principal, "embedding.encode", "텍스트 임베딩 생성")
     async def create_embeddings(request: Request):
         if request.url.path.startswith("/api/v1/"):
             principal(request)
@@ -137,10 +140,7 @@ def install_embedding_routes(app, settings, auth, principal):
             current_settings.gemini_api_key, texts, payload.model, payload.dimensions
         )
 
-        items = [
-            EmbeddingItem(index=idx, embedding=emb)
-            for idx, emb in enumerate(embeddings)
-        ]
+        items = [EmbeddingItem(index=idx, embedding=emb) for idx, emb in enumerate(embeddings)]
 
         return EmbeddingResponse(
             model=payload.model,

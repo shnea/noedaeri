@@ -1,3 +1,4 @@
+const { mediaTasks } = require('./ui-fixtures.cjs');
 const {chromium}=require('playwright');
 const fs=require('node:fs/promises');
 const assert=require('node:assert/strict');
@@ -10,7 +11,7 @@ const assert=require('node:assert/strict');
  await page.route('**/api/**',async route=>{
  const path=new URL(route.request().url()).pathname;
  if(path.endsWith('/webhook-retry')){sent++;job.delivery.state='pending';job.delivery.attempts=0;return route.fulfill({json:{accepted:true}});}
- const data=path==='/api/me'?{id:'fixture',role:'admin',status:'approved',csrf:'fixture'}:path==='/api/jobs'?[job]:[];
+ const data=path==='/api/me'?{id:'fixture',role:'admin',status:'approved',csrf:'fixture'}:path==='/api/tasks'?mediaTasks([job],route.request().url()):[];
  return route.fulfill({json:data});
  });
  await page.goto('http://127.0.0.1:5173/');

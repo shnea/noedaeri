@@ -1,3 +1,4 @@
+const { mediaTasks } = require('./ui-fixtures.cjs');
 const { chromium } = require('playwright');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs/promises');
@@ -20,7 +21,7 @@ p=Path(sys.argv[1]); im=Image.new('RGBA',(1200,800),(220,240,225,255)); d=ImageD
       const path=new URL(route.request().url()).pathname;
       if(path.endsWith('/preview.webp'))return route.fulfill({body:await fs.readFile(root+'/out/preview.webp'),contentType:'image/webp'});
       if(path==='/api/jobs'&&route.request().method()==='POST'){payload=route.request().postDataJSON();return route.fulfill({json:{...job,status:'uploading'}});}
-      const data=path==='/api/me'?{id:'fixture',role:'admin',status:'approved',csrf:'fixture'}:path==='/api/jobs'?[job]:path==='/api/services'?[{kind:'image.package',service:'image',label:'이미지 통합 처리',input_type:'upload'}]:[];
+      const data=path==='/api/me'?{id:'fixture',role:'admin',status:'approved',csrf:'fixture'}:path==='/api/tasks'?mediaTasks([job],route.request().url()):path==='/api/services'?[{kind:'image.package',service:'image',label:'이미지 통합 처리',input_type:'upload'}]:[];
       return route.fulfill({json:data});
     });
     await page.goto('http://127.0.0.1:5173/');

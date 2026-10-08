@@ -1,3 +1,4 @@
+const { mediaTasks } = require('./ui-fixtures.cjs');
 // Browser checks use explicitly synthetic API fixtures, never production identity or keys.
 const { chromium } = require('playwright');
 const assert = require('node:assert/strict');
@@ -35,7 +36,7 @@ const fs = require('node:fs/promises');
       await route.fulfill({ status: uploadAttempts === 1 ? 503 : 200, json: { detail: 'upload_failed', status: 'queued' } });
       return;
     }
-    else if (pathname === '/api/jobs') body = jobs;
+    else if (pathname === '/api/tasks') body = mediaTasks(jobs, route.request().url());
     else if (pathname === '/api/services') body = [{ kind: 'video.thumbnail', service: 'ffmpeg', label: '영상 썸네일', input_type: 'upload' }];
     else if (pathname === '/api/admin/users') body = [];
     else if (pathname === '/api/admin/workers') body = [];

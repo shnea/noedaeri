@@ -62,10 +62,18 @@ function formatDate(isoString: string | null | undefined): string {
       });
 }
 
-export function EmbeddingRagPanel({ csrf }: { csrf: string }) {
+export function EmbeddingRagPanel({
+  csrf,
+  initialTab = "indexing",
+  isAdmin = false,
+}: {
+  csrf: string;
+  initialTab?: "indexing" | "search" | "embedding" | "raya";
+  isAdmin?: boolean;
+}) {
   const [subTab, setSubTab] = useState<
     "indexing" | "search" | "embedding" | "raya"
-  >("indexing");
+  >(initialTab);
 
   const [collections, setCollections] = useState<CollectionOverview[]>([]);
   const [indexingJobs, setIndexingJobs] = useState<IndexingJob[]>([]);
@@ -388,13 +396,15 @@ export function EmbeddingRagPanel({ csrf }: { csrf: string }) {
         >
           단일 텍스트 임베딩 테스트
         </button>
-        <button
-          className={subTab === "raya" ? "active primary" : ""}
-          aria-pressed={subTab === "raya"}
-          onClick={() => setSubTab("raya")}
-        >
-          Raya 난이도 라우터 상태
-        </button>
+        {isAdmin && (
+          <button
+            className={subTab === "raya" ? "active primary" : ""}
+            aria-pressed={subTab === "raya"}
+            onClick={() => setSubTab("raya")}
+          >
+            Raya 난이도 라우터 상태
+          </button>
+        )}
       </div>
 
       {subTab === "indexing" && (

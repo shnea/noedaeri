@@ -25,6 +25,7 @@ from .embeddings import (
     generate_embeddings,
 )
 from .integration import PLATFORM_OWNER
+from .tasks import tracked_operation
 
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_SEARCH_DOCUMENTS = 10000
@@ -414,6 +415,14 @@ def install_indexing_routes(app: FastAPI, db: Database, auth: Auth, settings: Se
     @app.post("/api/ai/v1/indexing/search", include_in_schema=False)
     @app.post("/api/v1/ai/indexing/search", operation_id="search_platform_vector_index")
     @app.post("/api/ai/indexing/search", operation_id="search_web_vector_index")
+    @tracked_operation(
+        db,
+        settings,
+        auth,
+        lambda request: {"id": authenticate_caller(request)[0]},
+        "indexing.search",
+        "벡터 검색",
+    )
     async def search_vector_index(request: Request):
         caller, admin = authenticate_caller(request)
         query = await read_payload(request, VectorSearchQuery)
@@ -425,7 +434,7 @@ def install_indexing_routes(app: FastAPI, db: Database, auth: Auth, settings: Se
         prefix = f"platform_{clean_project}_{clean_env}_"
         candidates = [query.collection]
         if query.collection.startswith(prefix):
-            candidates.append(query.collection[len(prefix):])
+            candidates.append(query.collection[len(prefix) :])
         elif not query.collection.startswith("platform_"):
             candidates.append(f"{prefix}{query.collection}")
         with db.connect() as conn:

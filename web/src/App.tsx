@@ -4,10 +4,13 @@ import { z } from "zod";
 import { IntegrationGuide } from "./IntegrationGuide";
 import { RayaPanel } from "./RayaPanel";
 import { VideoResult } from "./VideoResult";
-import { AiJobsPanel } from "./AiJobsPanel";
+import { AiUsagePanel } from "./AiUsagePanel";
+import { TaskDetails } from "./TaskDetails";
 import { EmbeddingRagPanel } from "./EmbeddingRagPanel";
 import {
   jobSchema,
+  aiJobSchema,
+  taskSchema,
   memberSchema,
   mutation,
   request,
@@ -16,7 +19,7 @@ import {
   workerSchema,
   errorLabel,
 } from "./api";
-import type { Job, Member, Service, User, Worker } from "./api";
+import type { Job, Member, Service, Task, User, Worker } from "./api";
 
 const statuses = new Map(
   Object.entries({
@@ -361,18 +364,26 @@ function NewTask({
   user,
   done,
   retryJob,
+  initialKind,
 }: {
   services: Service[];
   user: User;
   done: () => void;
   retryJob?: Job | null;
+  initialKind: string;
 }) {
   const titleInput = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (retryJob) titleInput.current?.focus();
   }, [retryJob]);
-  const [kind, setKind] = useState(retryJob?.kind ?? services[0]?.kind ?? "");
+
+  const [kind, setKind] = useState(
+    retryJob?.kind ?? (initialKind || services[0]?.kind || ""),
+  );
+
   const [title, setTitle] = useState(retryJob?.title ?? "");
+  const [taskType, setTaskType] = useState("chat.general");
+  const [prompt, setPrompt] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [seconds, setSeconds] = useState(retryJob?.options?.seconds ?? 0);
   const [busy, setBusy] = useState(false);
@@ -383,6 +394,41 @@ function NewTask({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+
+    if (service?.interface === "ai") {
+      setBusy(true);
+      setError("");
+
+      try {
+        const response = await request(
+          "/api/ai/jobs",
+          mutation(
+            user.csrf,
+            JSON.stringify({
+              request_id: key,
+              task_type: taskType,
+              prompt: prompt.trim(),
+              project: "web-test",
+              environment: "production",
+              sync: false,
+            }),
+          ),
+        );
+
+        aiJobSchema.parse(await response.json());
+        done();
+      } catch (failure) {
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "AI 작업을 등록하지 못했습니다.",
+        );
+      } finally {
+        setBusy(false);
+      }
+
+      return;
+    }
 
     if (!file || !service) {
       setError("작업 종류와 입력을 선택해 주세요.");
@@ -459,6 +505,7 @@ function NewTask({
         <label>
           작업 종류
           <select
+            aria-label="작업 종류"
             disabled={submitted || Boolean(retryJob)}
             value={kind}
             onChange={(event) => {
@@ -466,25 +513,64 @@ function NewTask({
               setFile(null);
             }}
           >
-            {services.map((item) => (
-              <option key={item.kind} value={item.kind}>
-                {item.service} · {item.label}
-              </option>
-            ))}
+            {services
+              .filter((item) => ["media", "ai"].includes(item.interface))
+              .map((item) => (
+                <option
+                  key={item.kind}
+                  value={item.kind}
+                  disabled={!item.available}
+                >
+                  {item.service} · {item.label}
+                </option>
+              ))}
           </select>
         </label>
-        <label>
-          작업명
-          <input
-            disabled={submitted}
-            required
-            maxLength={120}
-            ref={titleInput}
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="예: 소개 영상 미리보기 생성"
-          />
-        </label>
+        {service?.interface === "media" && (
+          <label>
+            작업명
+            <input
+              disabled={submitted}
+              required
+              maxLength={120}
+              ref={titleInput}
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="예: 소개 영상 미리보기 생성"
+            />
+          </label>
+        )}
+        {service?.interface === "ai" && (
+          <>
+            <label>
+              AI 작업 유형
+              <select
+                aria-label="AI 작업 유형"
+                value={taskType}
+                disabled={busy}
+                onChange={(event) => setTaskType(event.target.value)}
+              >
+                {service.task_types.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="wide-field">
+              입력 내용
+              <textarea
+                required
+                rows={5}
+                maxLength={200000}
+                disabled={busy}
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="처리할 내용을 입력하세요."
+              />
+            </label>
+          </>
+        )}
         {service?.input_type === "upload" && (
           <label>
             {kind === "image.package" ? "입력 이미지" : "입력 영상"}
@@ -535,7 +621,7 @@ function NewTask({
           {error}
         </p>
       )}
-      <button className="primary" disabled={busy || !service}>
+      <button className="primary" disabled={busy || !service?.available}>
         {busy
           ? "입력 전송 중…"
           : submitted
@@ -549,7 +635,7 @@ function NewTask({
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [checking, setChecking] = useState(true);
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobs, setJobs] = useState<Task[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
@@ -557,6 +643,13 @@ export default function App() {
   const [expanded, setExpanded] = useState("");
   const [filter, setFilter] = useState("all");
   const [serviceFilter, setServiceFilter] = useState("all");
+  const [offset, setOffset] = useState(0);
+  const [newKind, setNewKind] = useState("");
+
+  const [ragView, setRagView] = useState<
+    "indexing" | "search" | "embedding" | "raya"
+  >("indexing");
+
   const [creating, setCreating] = useState(false);
   const [retryJob, setRetryJob] = useState<Job | null>(null);
   const [error, setError] = useState("");
@@ -586,12 +679,21 @@ export default function App() {
         return;
       }
 
+      const parameters = new URLSearchParams({
+        limit: "100",
+        offset: String(offset),
+      });
+
+      if (filter !== "all") parameters.set("status", filter);
+
+      if (serviceFilter !== "all") parameters.set("service", serviceFilter);
+
       const responses = await Promise.all([
-        request("/api/jobs"),
+        request(`/api/tasks?${parameters}`),
         request("/api/services"),
       ]);
 
-      setJobs(z.array(jobSchema).parse(await responses[0].json()));
+      setJobs(z.array(taskSchema).parse(await responses[0].json()));
       setServices(z.array(serviceSchema).parse(await responses[1].json()));
 
       if (currentUser.role === "admin") {
@@ -625,13 +727,20 @@ export default function App() {
     }, 5000);
 
     return () => window.clearInterval(timer);
-  }, []);
+  }, [filter, serviceFilter, offset]);
 
-  async function cancel(job: Job) {
+  async function cancel(job: Task) {
     if (!user) return;
 
     try {
-      await request(`/api/jobs/${job.id}/cancel`, mutation(user.csrf));
+      const prefix =
+        job.source === "media"
+          ? "/api/jobs"
+          : job.source === "ai"
+            ? "/api/ai/jobs"
+            : "/api/ai/indexing";
+
+      await request(`${prefix}/${job.id}/cancel`, mutation(user.csrf));
       await refresh();
     } catch (failure) {
       setError(
@@ -703,16 +812,21 @@ export default function App() {
     }
   }
 
-  const visible = jobs.filter(
-    (job) =>
-      (filter === "all" || job.status === filter) &&
-      (serviceFilter === "all" || job.service === serviceFilter),
-  );
+  const visible = jobs;
 
   const tabs =
     user?.role === "admin"
-      ? ["작업", "AI 작업", "임베딩·RAG", "서비스", "Raya", "연동 지침", "워커", "사용자"]
-      : ["작업", "AI 작업", "임베딩·RAG", "서비스", "연동 지침"];
+      ? [
+          "작업",
+          "서비스",
+          "사용량",
+          "임베딩·RAG",
+          "Raya",
+          "연동 지침",
+          "워커",
+          "사용자",
+        ]
+      : ["작업", "서비스", "사용량", "임베딩·RAG", "연동 지침"];
 
   return (
     <>
@@ -815,13 +929,17 @@ export default function App() {
                     ? "요청한 작업의 대기, 실행, 결과를 한곳에서 확인합니다."
                     : tab === "서비스"
                       ? "현재 실행할 수 있는 작업 종류입니다."
-                      : tab === "Raya"
-                        ? "요청 난이도 판단과 모델 실행 정책을 확인합니다."
-                        : tab === "연동 지침"
-                          ? "기능별 호출 방법과 현재 연결 가능한 범위를 확인합니다."
-                          : tab === "워커"
-                            ? "워커의 마지막 연결 상태를 확인합니다."
-                            : "플랫폼으로 로그인한 사용자의 접근을 관리합니다."}
+                      : tab === "사용량"
+                        ? "공급자와 모델별 호출 수·토큰 사용량을 확인합니다."
+                        : tab === "임베딩·RAG"
+                          ? "문서 색인과 검색을 테스트하고 컬렉션을 관리합니다."
+                          : tab === "Raya"
+                            ? "요청 난이도 판단과 모델 실행 정책을 확인합니다."
+                            : tab === "연동 지침"
+                              ? "기능별 호출 방법과 현재 연결 가능한 범위를 확인합니다."
+                              : tab === "워커"
+                                ? "워커의 마지막 연결 상태를 확인합니다."
+                                : "플랫폼으로 로그인한 사용자의 접근을 관리합니다."}
                 </p>
               </div>
               {tab === "작업" && (
@@ -836,11 +954,14 @@ export default function App() {
                 </button>
               )}
             </div>
-            {tab === "AI 작업" && (
-              <AiJobsPanel key={user.id} csrf={user.csrf} />
-            )}
+            {tab === "사용량" && <AiUsagePanel key={user.id} />}
             {tab === "임베딩·RAG" && (
-              <EmbeddingRagPanel key={user.id} csrf={user.csrf} />
+              <EmbeddingRagPanel
+                key={`${user.id}:${ragView}`}
+                csrf={user.csrf}
+                initialTab={ragView}
+                isAdmin={user.role === "admin"}
+              />
             )}
             {tab === "연동 지침" && <IntegrationGuide />}
             {tab === "Raya" && user.role === "admin" && (
@@ -850,6 +971,7 @@ export default function App() {
               <NewTask
                 key={retryJob?.id ?? "new"}
                 retryJob={retryJob}
+                initialKind={newKind}
                 services={services}
                 user={user}
                 done={() => {
@@ -865,8 +987,12 @@ export default function App() {
                   <label>
                     서비스
                     <select
+                      aria-label="서비스"
                       value={serviceFilter}
-                      onChange={(event) => setServiceFilter(event.target.value)}
+                      onChange={(event) => {
+                        setServiceFilter(event.target.value);
+                        setOffset(0);
+                      }}
                     >
                       <option value="all">모든 서비스</option>
                       {[...new Set(services.map((item) => item.service))].map(
@@ -881,8 +1007,12 @@ export default function App() {
                   <label>
                     상태
                     <select
+                      aria-label="상태"
                       value={filter}
-                      onChange={(event) => setFilter(event.target.value)}
+                      onChange={(event) => {
+                        setFilter(event.target.value);
+                        setOffset(0);
+                      }}
                     >
                       <option value="all">모든 상태</option>
                       {[
@@ -917,23 +1047,31 @@ export default function App() {
                           <th scope="col">서비스</th>
                           <th scope="col">상태</th>
                           <th scope="col">요청자</th>
-                          <th scope="col">워커</th>
+                          <th scope="col">실행 담당</th>
                           <th scope="col">요청 시각</th>
                         </tr>
                       </thead>
                       <tbody>
                         {visible.map((job) => (
-                          <Fragment key={job.id}>
+                          <Fragment key={`${job.source}:${job.id}`}>
                             <tr
-                              className={expanded === job.id ? "selected" : ""}
+                              className={
+                                expanded === `${job.source}:${job.id}`
+                                  ? "selected"
+                                  : ""
+                              }
                             >
                               <td>
                                 <button
                                   className="job-title"
-                                  aria-expanded={expanded === job.id}
+                                  aria-expanded={
+                                    expanded === `${job.source}:${job.id}`
+                                  }
                                   onClick={() =>
                                     setExpanded(
-                                      expanded === job.id ? "" : job.id,
+                                      expanded === `${job.source}:${job.id}`
+                                        ? ""
+                                        : `${job.source}:${job.id}`,
                                     )
                                   }
                                 >
@@ -943,7 +1081,9 @@ export default function App() {
                                     viewBox="0 0 16 16"
                                     aria-hidden="true"
                                     className={
-                                      expanded === job.id ? "rotated" : ""
+                                      expanded === `${job.source}:${job.id}`
+                                        ? "rotated"
+                                        : ""
                                     }
                                   >
                                     <path
@@ -958,11 +1098,7 @@ export default function App() {
                               </td>
                               <td>
                                 {job.service}
-                                <small>
-                                  {services.find(
-                                    (item) => item.kind === job.kind,
-                                  )?.label ?? job.kind}
-                                </small>
+                                <small>{job.label}</small>
                               </td>
                               <td>
                                 <Status value={job.status} />
@@ -974,30 +1110,34 @@ export default function App() {
                                     ? "나"
                                     : job.owner_id.slice(0, 8)}
                               </td>
-                              <td>
-                                {job.worker_id
-                                  ? job.worker_id.slice(0, 8)
-                                  : "배정 대기"}
-                              </td>
+                              <td>{job.executor}</td>
                               <td>{date(job.created_at)}</td>
                             </tr>
-                            {expanded === job.id && (
+                            {expanded === `${job.source}:${job.id}` && (
                               <tr className="detail-row">
                                 <td colSpan={6}>
-                                  <Details
-                                    redeliver={() => {
-                                      void redeliver(job);
-                                    }}
-                                    retry={() => {
-                                      setRetryJob(job);
-                                      setCreating(true);
-                                      window.scrollTo({ top: 0 });
-                                    }}
-                                    job={job}
-                                    cancel={() => {
-                                      void cancel(job);
-                                    }}
-                                  />
+                                  {job.source === "media" ? (
+                                    <Details
+                                      redeliver={() => {
+                                        void redeliver(job.data);
+                                      }}
+                                      retry={() => {
+                                        setRetryJob(job.data);
+                                        setCreating(true);
+                                        window.scrollTo({ top: 0 });
+                                      }}
+                                      job={job.data}
+                                      cancel={() => {
+                                        void cancel(job);
+                                      }}
+                                    />
+                                  ) : (
+                                    <TaskDetails
+                                      task={job}
+                                      currentUserId={user.id}
+                                      cancel={() => void cancel(job)}
+                                    />
+                                  )}
                                 </td>
                               </tr>
                             )}
@@ -1009,16 +1149,33 @@ export default function App() {
                 ) : (
                   <section className="empty">
                     <h2>
-                      {jobs.length
-                        ? "조건에 맞는 작업이 없습니다."
-                        : "아직 요청한 작업이 없습니다."}
+                      {offset > 0
+                        ? "더 표시할 작업이 없습니다."
+                        : filter !== "all" || serviceFilter !== "all"
+                          ? "조건에 맞는 작업이 없습니다."
+                          : "아직 요청한 작업이 없습니다."}
                     </h2>
                     <p>
-                      {jobs.length
-                        ? "필터를 변경해 다른 작업을 확인하세요."
-                        : "새 작업에서 서비스를 선택하고 첫 연산을 요청하세요."}
+                      {offset > 0
+                        ? "앞선 작업 목록으로 돌아가세요."
+                        : filter !== "all" || serviceFilter !== "all"
+                          ? "필터를 변경해 다른 작업을 확인하세요."
+                          : "새 작업에서 서비스를 선택하고 첫 연산을 요청하세요."}
                     </p>
-                    {!jobs.length && (
+                    {offset > 0 ? (
+                      <button onClick={() => setOffset(Math.max(0, offset - 100))}>
+                        이전 목록으로
+                      </button>
+                    ) : filter !== "all" || serviceFilter !== "all" ? (
+                      <button
+                        onClick={() => {
+                          setFilter("all");
+                          setServiceFilter("all");
+                        }}
+                      >
+                        필터 초기화
+                      </button>
+                    ) : (
                       <button
                         className="primary"
                         onClick={() => {
@@ -1032,7 +1189,25 @@ export default function App() {
                   </section>
                 )}
                 <footer>
-                  <span>{visible.length}개 표시 · 최근 최대 100개 조회</span>
+                  <span>
+                    {visible.length
+                      ? `${offset + 1}번째부터 ${visible.length}개 표시`
+                      : "표시할 작업 없음"}
+                  </span>
+                  <div className="actions">
+                    <button
+                      disabled={offset === 0}
+                      onClick={() => setOffset(Math.max(0, offset - 100))}
+                    >
+                      이전 작업
+                    </button>
+                    <button
+                      disabled={jobs.length < 100}
+                      onClick={() => setOffset(offset + 100)}
+                    >
+                      다음 작업
+                    </button>
+                  </div>
                   <span>
                     {refreshed
                       ? `최근 갱신 ${date(refreshed)}`
@@ -1052,17 +1227,63 @@ export default function App() {
                     <p>
                       입력:{" "}
                       {service.input_type === "upload"
-                        ? "영상 업로드"
-                        : service.input_type}
+                        ? "파일 업로드"
+                        : service.input_type === "text"
+                          ? "텍스트"
+                          : "문서·검색 조건"}
                     </p>
-                    <button
-                      onClick={() => {
-                        setTab("작업");
-                        setCreating(true);
-                      }}
-                    >
-                      작업 만들기
-                    </button>
+                    <p>
+                      {service.available ? "연결 설정됨" : "연결 설정 필요"}
+                    </p>
+                    <div className="actions">
+                      <button
+                        disabled={
+                          !service.available ||
+                          (service.interface === "raya" &&
+                            user.role !== "admin")
+                        }
+                        onClick={() => {
+                          if (["media", "ai"].includes(service.interface)) {
+                            setRetryJob(null);
+                            setNewKind(service.kind);
+                            setTab("작업");
+                            setCreating(true);
+                          } else if (service.interface === "raya") {
+                            setTab("Raya");
+                          } else {
+                            const view =
+                              service.interface === "embedding"
+                                ? "embedding"
+                                : service.interface === "search"
+                                  ? "search"
+                                  : "indexing";
+
+                            setRagView(view);
+                            setTab("임베딩·RAG");
+                          }
+                        }}
+                      >
+                        {" "}
+                        {service.interface === "raya"
+                          ? "실행 정책·테스트"
+                          : ["media", "ai"].includes(service.interface)
+                            ? "작업 만들기"
+                            : "관리·테스트"}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setServiceFilter(service.service);
+                          setOffset(0);
+                          setTab("작업");
+                          setCreating(false);
+                        }}
+                      >
+                        작업 보기
+                      </button>
+                    </div>
+                    {service.interface === "raya" && user.role !== "admin" && (
+                      <p>관리자에게 실행 정책을 확인해 주세요.</p>
+                    )}
                   </section>
                 ))}
                 <p className="muted">
