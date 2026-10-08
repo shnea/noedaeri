@@ -1,6 +1,6 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 15 · 기준일: 2026-10-08
+문서 버전: 16 · 기준일: 2026-10-08
 
 ## 현재 연결 가능한 범위
 
@@ -12,6 +12,8 @@
 
 | 기능 | 작업 종류 | 현재 상태 |
 |---|---|---|
+| 목소리 등록·관리 | `/api/v1/voices` | 기본 목소리·참조 음성 등록, 조회·이름 수정·삭제, 요청자 범위 확인 |
+| 음성 생성 | `tts.synthesize` | Qwen3-TTS 1.7B 8bit, Job 큐·WAV·서명 완료 알림·웹 테스트 |
 | 이미지 통합 처리 | `image.package` | JPEG 썸네일·WebP 미리보기·ZIP 생성 가능 |
 | 영상 썸네일 | `video.thumbnail` | 웹 요청·결과 다운로드 가능 |
 | 통합 영상 처리 | `video.package` | 썸네일·해상도별 HLS·ZIP 생성 가능 |
@@ -30,7 +32,7 @@
 
 ## 통합 작업과 서비스 관리
 
-웹의 **작업** 메뉴는 모든 종류의 실행 이력을 같은 목록에서 보여준다. AI 전용 작업 메뉴는 사용하지 않는다. **사용량**은 모델별 토큰·호출 집계, **임베딩·RAG**는 문서·컬렉션·검색 관리, **Raya**는 관리자 실행 정책·테스트에 사용한다. 각 전용 화면에서 요청한 연산도 작업 목록에 나타난다.
+웹의 **작업** 메뉴는 모든 종류의 실행 이력을 같은 목록에서 보여준다. AI 전용 작업 메뉴는 사용하지 않는다. **사용량**은 모델별 토큰·호출 집계, **임베딩·RAG**는 문서·컬렉션·검색 관리, **Raya**는 관리자 실행 정책·테스트, **TTS·목소리**는 목소리 등록·관리·음성 테스트에 사용한다. 각 전용 화면에서 요청한 연산도 작업 목록에 나타난다.
 
 `GET /api/v1/tasks`는 플랫폼 키로 플랫폼 소유 작업만 조회한다. 웹의 `GET /api/tasks`는 승인 세션을 사용하며, 기존 소유권·관리자 권한에 따른 조회 범위를 유지한다. 파일 관리자 조회는 자신의 작업과 플랫폼 작업, AI·색인·직접 호출 관리자 조회는 전체 작업이다. 일반 사용자는 자신의 작업만 조회한다.
 
@@ -38,16 +40,149 @@
 |---|---|
 | `limit` | 기본 100, 1~100 |
 | `offset` | 기본 0, 0~1,000,000 |
-| `service` | 선택. `image`, `ffmpeg`, `n8n`, `indexing`, `embedding`, `raya` |
+| `service` | 선택. `image`, `ffmpeg`, `tts`, `n8n`, `indexing`, `embedding`, `raya` |
 | `status` | 선택. `queued`, `running`, `succeeded`, `failed`, `cancelled`, `interrupted`, `uploading`. 색인의 `pending`은 공통 목록에서 `queued`로 표시 |
 
 응답은 최신 요청부터 정렬한 배열이다. 항목은 `id`, `source`, `title`, `kind`, `service`, `label`, `status`, `owner_id`, `origin`, `executor`, `created_at`, `data`를 가진다. `source`는 `media`, `ai`, `indexing`, `operation`이며 `data`는 해당 종류의 상세다. 서로 다른 종류의 작업을 합친 다음 필터·정렬·페이지 한도를 적용한다. 승인 전·철회된 사용자는 조회할 수 없으며 인증 실패는 기존 HTTP 오류 계약을 따른다.
 
-`GET /api/v1/services`와 웹 `/api/services`는 이미지·영상뿐 아니라 n8n AI, Raya, 임베딩, 색인, 검색을 함께 제공한다. 기존 `kind`, `service`, `label`, `input_type`에 `interface`, `available`, `task_types`를 추가한다. `available`은 필요한 연결 설정의 존재를 나타내며 실제 서비스 연결 검수를 대신하지 않는다. AI 서비스 항목은 미디어 워커의 `POST /api/v1/jobs` 입력으로 사용할 수 없으며 기존 AI 실행 API를 사용한다.
+`GET /api/v1/services`와 웹 `/api/services`는 이미지·영상·TTS뿐 아니라 n8n AI, Raya, 임베딩, 색인, 검색을 함께 제공한다. 기존 `kind`, `service`, `label`, `input_type`에 `interface`, `available`, `task_types`를 추가한다. `available`은 필요한 연결 설정의 존재를 나타내며 실제 서비스 연결 검수를 대신하지 않는다. AI 서비스 항목은 미디어 워커의 `POST /api/v1/jobs` 입력으로 사용할 수 없으며 기존 AI 실행 API를 사용한다.
 
 직접 임베딩·검색·Raya API는 기존 동기 응답을 유지하면서 `operation` 실행 이력을 남긴다. 임베딩 벡터·검색 본문은 원래 API 응답으로 반환하고 이력에는 생성 수·차원·검색 건수 등 요약만 저장한다. 요약은 웹 완료 후 24시간, 플랫폼은 설정된 플랫폼 결과 보관 기간 후 지우며 작업 이력은 유지한다. 만료한 요약은 통합 조회에서도 반환하지 않는다. 요청 실패는 실패 이력, 실행 종료를 확인할 수 없는 중단은 확인 필요 상태로 기록한다. 실행 중 직접 호출의 취소·자동 재시도·완료 웹훅은 제공하지 않는다. 입력 검증·인증 실패를 무조건 재실행하지 않는다.
 
-통합 조회가 전체 연산의 단일 실행 큐를 뜻하지는 않는다. 현재 파일 워커·n8n·색인·직접 호출의 실행 경로는 분리되어 있다. 전역 자원 배정과 초기 동시 실행 수 1 적용은 신규 모델 추가 전 후속 작업이다. 기존 파일 완료 웹훅·보존·다운로드·receipt 계약은 그대로 사용한다.
+통합 조회가 전체 연산의 단일 실행 큐를 뜻하지는 않는다. 현재 파일 워커·n8n·색인·직접 호출의 실행 경로는 분리되어 있다. 파일·TTS 로컬 워커는 같은 단일 연산 슬롯을 사용한다. 다른 실행 경로까지의 전역 자원 배정 통합은 후속 작업이다. 기존 파일 완료 웹훅·보존·다운로드·receipt 계약은 그대로 사용한다.
+
+## TTS와 목소리 프로필
+
+TTS는 Mac의 MLX 워커에서 직접 실행한다. 목소리는 **요청자 ID**로 구분한다.
+웹은 서버가 로그인한 사용자 ID를 확정하며 일반 사용자의 다른 요청자 ID 지정은 거부한다.
+플랫폼은 인증한 이용자의 `requester_id`를 전달하고 기본 목소리 매핑·이용자 권한을 관리한다.
+뇌대리는 프로필·참조 음성·합성을 담당한다. 플랫폼 키는 신뢰하는 서버용이며 이용자에게 배포하지 않는다.
+외부 앱에 이 키를 주지 않는다. 웹은 승인 세션을 사용하며 일반 사용자는 자신의 프로필만,
+관리자는 자신의 프로필과 플랫폼 프로필을 관리한다.
+
+### 등록·조회·이름 수정·삭제
+
+| API | 요청·응답 |
+|---|---|
+| `POST /api/v1/voices` | 아래 등록 JSON. 201로 프로필 반환. 같은 소유자·멱등 키·동일 본문은 같은 프로필, 다른 본문은 409 |
+| `GET /api/v1/voices` | `requester_id` 필수, `project=default`, `environment=production`. 해당 범위의 미삭제 프로필, 최신순 최대 500개 |
+| `GET /api/v1/voices/{voice_id}` | 위 범위 쿼리로 프로필 확인. 다른 요청자·프로젝트·환경 또는 삭제된 프로필은 404 |
+| `PATCH /api/v1/voices/{voice_id}` | 위 범위 쿼리 + `{"name":"새 이름"}`. 이름만 변경 |
+| `GET /api/v1/voices/{voice_id}/sample` | 위 범위 쿼리. 사용 가능한 참조 음성만 WAV로 반환. 기본 목소리는 파일 없음 |
+| `DELETE /api/v1/voices/{voice_id}` | 위 범위 쿼리. 사용하는 업로드·대기·실행·종료 미확인 작업이 있으면 409. 실제 파일 삭제 후 `deleted:true` |
+
+```json
+{
+  "idempotency_key": "<새 UUID>",
+  "name": "한국어 안내",
+  "kind": "preset",
+  "speaker": "Sohee",
+  "requester_id": "<플랫폼이 인증한 요청자 ID>",
+  "project": "<프로젝트>",
+  "environment": "production"
+}
+```
+
+기본 목소리는 `Sohee`, `Vivian`, `Serena`, `Uncle_Fu`, `Dylan`, `Eric`, `Ryan`, `Aiden`,
+`Ono_Anna` 중 선택하며 즉시 `ready`다. 한국어 초기 테스트는 Sohee를 사용했다.
+참조 음성 등록은 `kind:"clone"`, `reference_text:"파일에서 실제 말한 대본"`을 사용하고
+`speaker`를 생략한다. 이름 1~120자, 대본 1~1,000자, 범위 값 각각 1~128자다.
+
+참조 등록 응답의 `registration_job_id`로 아래 입력을 전송한다.
+
+```text
+PUT /api/v1/jobs/{registration_job_id}/input
+X-Noedaeri-API-Key: <플랫폼 전용 요청 키>
+Content-Type: application/octet-stream
+
+<참조 음성 원시 바이트>
+```
+
+WAV·MP3·FLAC·OGG·M4A·AAC를 허용하고 참조 음성은 3~30초·최대 64MiB
+(운영 업로드 한도가 더 작으면 그 한도)를 적용한다. FFmpeg가 디코딩·정규화한
+24kHz·모노·PCM16 WAV를 별도 영속 경로에 보관한다. 원본 파일은 플랫폼에서 보유한다.
+참조 음성의 대본 일치·목소리 품질을 자동 판정하지 않으므로 일치하는 대본과 명료한 녹음을 사용한다.
+완료는 기존 서명 웹훅 `job.succeeded`로 받는다. `job.kind`는 `tts.voice.register`,
+`job.result.type`은 `voice_profile`, `voice_id`는 등록한 프로필이다. 이후 프로필 조회로
+`ready`를 확인해 사용한다. 직접 `POST /api/v1/jobs`로 등록 작업을 만들 수는 없다.
+
+프로필은 `id`, `owner_id`, `name`, `kind`, `speaker`, `requester_id`, `project`, `environment`,
+`reference_text`, `status`, `registration_job_id`, `sample_bytes`, `sample_available`, `error_code`, `created_at`를 반환한다.
+참조 저장소 연결 해제·파일 유실은 이력은 유지하고 `sample_available:false`와 오류로 표시한다.
+검증 중에는 업로드·대기·실행 상태, 실패·취소 시 해당 Job 상태를 표시한다.
+삭제 실패는 `deleted:false,status:cleanup_failed`이며 삭제를 다시 요청한다. 이름 변경 후 같은
+등록 멱등 키로 과거 이름을 전송하면 충돌하므로 기존 프로필을 조회한다.
+
+### 선택한 목소리로 합성
+
+```json
+{
+  "kind": "tts.synthesize",
+  "title": "안내 음성 생성",
+  "idempotency_key": "<새 UUID>",
+  "input": {
+    "type": "text",
+    "text": "안녕하세요. 오늘도 좋은 하루 보내세요.",
+    "language": "Korean",
+    "requester_id": "<프로필과 같은 요청자 ID>",
+    "project": "<프로필과 같은 프로젝트>",
+    "environment": "production"
+  },
+  "options": {"voice_id": "<ready 프로필 UUID>", "instruct": ""}
+}
+```
+
+`POST /api/v1/jobs`로 접수한다. 텍스트 1~4,000자, 언어는 `Korean`, `English`, `Japanese`,
+`Chinese`, `German`, `French`, `Russian`, `Portuguese`, `Spanish`, `Italian`이다.
+`instruct`는 기본 목소리의 말투 지시 최대 300자다. 참조 목소리에는 빈 값만 허용한다.
+플랫폼은 `requester_id`를 반드시 전달한다. 요청자·프로젝트·환경은 프로필과 일치해야 한다.
+웹은 요청자를 생략하면 로그인한 사용자 ID를 사용한다. 웹 관리자는 플랫폼 프로필도 관리·테스트할 수 있다.
+아직 검증되지 않은 목소리, 삭제된 목소리, 참조 파일이 없는 목소리는 실행을 거부한다.
+
+음성 생성 완료는 기존 웹훅으로 받으며 반복 조회가 필요하지 않다. 성공 결과는
+`type:artifact`, `name:speech.wav`, `media_type:audio/wav`, `duration_seconds`, `sample_rate`,
+`elapsed_seconds`, `peak_memory_bytes`를 포함한다. MLX 최대 메모리는 프로세스 전체 RSS가 아니다.
+`GET /api/v1/jobs/{job_id}/result`로 WAV를 받고 플랫폼 파일 서비스에 저장한 뒤 기존
+`receipt`로 저장 확인한다. 기존 알림 멱등 처리·다운로드 복구·만료 계약을 그대로 따른다.
+등록·생성도 **작업** 목록과 **서비스**에 표시한다.
+
+### 실행·보관·실패
+
+파일·TTS는 로컬 단일 연산 슬롯을 사용하고 요청마다 모델 프로세스를 시작·회수한다.
+기본 자원 대기 600초·합성 제한 600초, 출력 최대 600초 WAV다. 긴 입력은 제한시간 안에
+끝나지 않을 수 있으며 `processing_timeout`으로 실패한다. 취소·점유 만료 시 실행을 중지하고
+프로세스 종료를 확인한다. 현재 모델을 작업 사이에 유지하는 정책은 제공하지 않는다.
+MLX 할당 목표 기본 6GiB와 작은 캐시를 사용하지만 OS 전체 메모리의 강제 상한은 아니다.
+파일·TTS 밖의 Raya·n8n·색인·직접 호출까지의 전역 예약 통합은 후속 검수 대상이다.
+
+등록된 참조 음성은 명시적 삭제까지 유지하며 웹 결과의 24시간 정리나 플랫폼 `receipt`가
+이를 지우지 않는다. 참조 저장 기본 한도는 512MiB, 미완료 참조 등록에도 프로필당 3MB를
+예약한다. 참조 음성은 공통 `SERVICE_STORAGE_ROOT` 아래 `tts/voices/<voice_id>/reference.wav`에
+보관한다. 향후 STT·OCR도 별도 서비스 폴더를 사용하며 용도와 보존 기간을 기능별로 명시한다.
+`VOICE_STORAGE_ROOT`로 TTS 경로를 재정의할 수 있고 임시 루트와 겹칠 수 없다.
+운영 NAS의 실제 루트·마운트·접속 정보는 암호화 설정에만 저장한다.
+`SERVICE_STORAGE_MOUNT_ROOT`(또는 TTS 전용 `VOICE_STORAGE_MOUNT_ROOT`)로 필수 마운트를
+지정하며 연결 해제 시 `voice_storage_unavailable`로 참조 등록·사용·삭제를 거부한다.
+같은 로컬 경로에 대신 저장하지 않는다. 네이티브 연결 관리자는 Mac 사용자 로그인 후 실행하고
+30초마다 확인·재연결하며 한 번의 연결 시도는 30초로 제한한다. 실제 재부팅과 NAS 공유 잠금·
+다중 호스트 동시 실행은 별도 검수 대상이다.
+
+| 오류 | 처리 |
+|---|---|
+| `tts_not_configured` | 모델·전용 환경·운영 활성 설정 확인 |
+| `unsupported_media` | 참조 형식·3~30초 길이 확인 |
+| `voice_not_ready` | 등록 Job 완료 또는 실패 확인 |
+| `clone_style_not_supported` | 참조 목소리의 말투 지시 제거 |
+| `voice_in_use` | 관련 작업 종료·취소 확인 후 삭제 |
+| `voice_storage_capacity_exceeded` | 미사용 참조 프로필 삭제 또는 저장 한도 조정 |
+| `voice_sample_missing` | 참조 음성 재등록·저장 경로 확인 |
+| `tts_memory_unavailable` / `tts_generation_failed` | 입력·메모리·설치를 확인한 후 새 Job으로 제한적으로 재시도 |
+
+n8n이 필요한 후속 파이프라인에는 HTTP Request 노드로 같은 플랫폼 Job API를 호출한다.
+헤더 키는 n8n Credential에서 주입하고 워크플로 JSON에 원문을 넣지 않는다.
+완료 수신은 플랫폼 서명 웹훅 수신기가 맡고, 필요 시 플랫폼이 검증·중복 제거한 이벤트를
+n8n 후속 흐름에 넘긴다. 단순 합성에 n8n을 경유하도록 강제하지 않는다.
+새 TTS n8n 워크플로 배포나 플랫폼의 요청자별 기본 목소리 매핑은 아직 구현하지 않았다.
 
 ## n8n AI 작업 분기 연동
 

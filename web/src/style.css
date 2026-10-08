@@ -973,3 +973,57 @@ main {
   width: auto;
   min-height: 0;
 }
+
+.voice-panel {
+  display: grid;
+  gap: 32px;
+  min-width: 0;
+}
+.voice-directory,
+.speech-test {
+  min-width: 0;
+  background: var(--paper);
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.voice-register {
+  padding: 20px 0;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.voice-sample {
+  display: block;
+  margin-top: 12px;
+  max-width: 100%;
+  width: 260px;
+}
+.speech-result {
+  display: block;
+  width: min(100%, 420px);
+  margin-bottom: 16px;
+}
+.voice-directory td {
+  vertical-align: top;
+}
+.speech-test h2,
+.voice-directory h2 {
+  margin-top: 0;
+}
+.speech-test .form-fields label {
+  min-width: 0;
+}
+.speech-test select {
+  min-width: 0;
+  width: 100%;
+}
+@media (max-width: 700px) {
+  .voice-directory,
+  .speech-test {
+    padding: 16px;
+  }
+  .voice-directory .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

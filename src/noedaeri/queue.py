@@ -43,7 +43,9 @@ class Queue:
                 conn.execute("UPDATE workers SET last_seen=now() WHERE id=%s", (job["worker_id"],))
             return job
 
-    def finish(self, job_id: UUID, token: UUID, status: str, code: str | None, result=None):
+    def finish(
+        self, job_id: UUID, token: UUID, status: str, code: str | None, result=None, on_success=None
+    ):
         if status not in {"succeeded", "failed", "cancelled"}:
             raise ValueError("Invalid terminal status")
         with self.db.connect() as conn:
@@ -56,6 +58,8 @@ class Queue:
                 return False
             if job["cancel_requested"]:
                 status, code = "cancelled", None
+            if status == "succeeded" and on_success:
+                result = on_success(conn, job, result)
             conn.execute(
                 "UPDATE jobs SET stage=CASE WHEN %s='succeeded' THEN 'finished' ELSE stage END, "
                 "status=%s, error_code=%s, "

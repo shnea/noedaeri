@@ -38,11 +38,47 @@ class Settings:
     gemini_api_key: str = ""
     n8n_origin: str = ""
     n8n_ai_webhook_url: str = ""
+    tts_enabled: bool = False
+    tts_timeout: int = 600
+    native_wait: int = 600
+    tts_memory_limit: int = 6 * 1024**3
+    voice_root: Path = Path(__file__).resolve().parents[2] / "data/tts/voices"
+    voice_storage_limit: int = 512 * 1024**2
+    voice_mount_root: Path | None = None
 
     @classmethod
     def from_env(cls):
         origin = os.environ.get("N8N_ORIGIN", "").rstrip("/")
         settings = cls(
+            voice_mount_root=Path(
+                os.environ.get("VOICE_STORAGE_MOUNT_ROOT")
+                or os.environ["SERVICE_STORAGE_MOUNT_ROOT"]
+            ).resolve()
+            if os.environ.get("VOICE_STORAGE_MOUNT_ROOT")
+            or os.environ.get("SERVICE_STORAGE_MOUNT_ROOT")
+            else None,
+            tts_enabled=os.environ.get("TTS_ENABLED", "0") == "1",
+            native_wait=int(os.environ.get("NATIVE_COMPUTE_WAIT_SECONDS", "600")),
+            tts_timeout=int(os.environ.get("TTS_TIMEOUT_SECONDS", "600")),
+            tts_memory_limit=int(os.environ.get("TTS_MEMORY_LIMIT_BYTES", str(6 * 1024**3))),
+            voice_root=Path(
+                os.environ.get(
+                    "VOICE_STORAGE_ROOT",
+                    str(
+                        Path(
+                            os.environ.get(
+                                "SERVICE_STORAGE_ROOT",
+                                os.environ.get(
+                                    "STATE_ROOT", Path(__file__).resolve().parents[2] / "data"
+                                ),
+                            )
+                        )
+                        / "tts"
+                        / "voices"
+                    ),
+                )
+            ).resolve(),
+            voice_storage_limit=int(os.environ.get("VOICE_STORAGE_MAX_BYTES", str(512 * 1024**2))),
             n8n_origin=origin,
             n8n_ai_webhook_url=os.environ.get("N8N_AI_WEBHOOK_URL")
             or (f"{origin}/webhook/noedaeri-ai" if origin else ""),
@@ -78,6 +114,18 @@ class Settings:
         )
         if settings.video_encoder not in {"auto", "libx264", "h264_videotoolbox"}:
             raise ValueError("Unsupported FFMPEG_VIDEO_ENCODER")
+        if not (30 <= settings.tts_timeout <= 3600 and settings.tts_memory_limit >= 4 * 1024**3):
+            raise ValueError("Invalid TTS execution limits")
+        if not 1 <= settings.native_wait <= 3600:
+            raise ValueError("Invalid native compute wait limit")
+        if settings.voice_root.is_relative_to(settings.storage_root):
+            raise ValueError("Voice profiles must be outside temporary storage")
+        if settings.voice_mount_root and not settings.voice_root.is_relative_to(
+            settings.voice_mount_root
+        ):
+            raise ValueError("Voice storage must be inside its required mount")
+        if settings.voice_storage_limit < 3_000_000:
+            raise ValueError("Invalid voice storage limit")
         if settings.raya_enabled and len(settings.raya_key) < 32:
             raise ValueError("Raya requires a dedicated API key of at least 32 characters")
         if not (

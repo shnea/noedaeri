@@ -1,5 +1,6 @@
 import os
 import secrets
+import shutil
 from pathlib import Path
 from uuid import uuid4
 
@@ -27,6 +28,7 @@ def app(tmp_path):
         worker_key=secrets.token_urlsafe(32),
         public_origin="https://testserver",
         storage_root=Path(tmp_path),
+        voice_root=Path(tmp_path).parent / (schema + "_voices"),
         integration_key=secrets.token_urlsafe(32),
         raya_key=secrets.token_urlsafe(32),
         webhook_secret=secrets.token_urlsafe(32),
@@ -41,6 +43,7 @@ def app(tmp_path):
     with TestClient(application, base_url="https://testserver") as client:
         application.state.client = client
         yield application
+    shutil.rmtree(settings.voice_root, ignore_errors=True)
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
 

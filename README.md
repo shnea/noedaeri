@@ -78,6 +78,50 @@ raya_runtime/.venv/bin/python scripts/install_raya.py
 
 ## 검사
 
+### TTS 설치와 목소리
+
+Apple Silicon에서 Qwen3-TTS 1.7B 8bit를 별도 MLX 환경으로 실행한다. 기본 목소리는 CustomVoice,
+참조 음성은 Base 모델을 사용한다. 두 모델은 약 6.2GB이며 모델·가상환경은 Git에서 제외한다.
+
+```sh
+uv sync --project tts_runtime --locked --python 3.12
+tts_runtime/.venv/bin/python scripts/install_tts.py
+```
+
+암호화 운영 설정에서 `TTS_ENABLED=1`을 적용하고 API·워커를 재시작한다. **TTS·목소리**에서
+목소리 등록·이름 수정·삭제·참조 음성 재생·선택한 목소리로 음성 생성을 제공한다.
+참조 음성 등록과 생성은 기존 Job 큐를 사용하고 **작업**에서 상태·취소·결과를 관리한다.
+기본 목소리 선택은 연산이 없어 즉시 등록된다. 플랫폼 호출 계약은 [연동 지침](docs/SERVICE_INTEGRATION.md)을 따른다.
+
+목소리 메타데이터는 DB, 정규화한 참조 음성은 공통 `SERVICE_STORAGE_ROOT` 아래
+`tts/voices/<voice_id>/reference.wav`에 보관한다. 향후 STT·OCR도 `stt/`, `ocr/` 등
+서비스별 폴더와 용도별 하위 폴더를 사용한다. `VOICE_STORAGE_ROOT`로 TTS 경로만 재정의할 수 있다.
+공통 루트 미설정 시 영속 상태 루트를 쓰며 임시 저장 루트와 겹치면 기동을 거부한다.
+등록된 목소리는 삭제까지 유지하고 웹에서 생성한 결과 WAV는 24시간 뒤 정리한다.
+운영 NAS의 실제 경로·접속 정보는 암호화 설정에만 둔다. `SERVICE_STORAGE_MOUNT_ROOT`로
+필수 마운트를 지정하며 연결 해제 시 로컬 경로에 대신 저장하지 않는다.
+
+`SERVICE_STORAGE_SMB_*`를 설정하면 `manage.py start`가 Swift NetFS 도우미를 영속 상태
+루트에 컴파일하고 NAS 연결 LaunchAgent를 설치한다. Mac 사용자 로그인 후 기동하고
+30초마다 연결을 확인해 재연결하며 한 번의 연결 시도는 30초로 제한한다. 비밀번호는
+메모리와 표준 입력으로만 전달한다. 실제 재부팅·로그인 전 실행은 검수하지 않았다.
+추가 서비스의 영속 데이터 보존 기간은 기능별로 명시하며 NAS에 있다는 이유만으로 영구 보존하지 않는다.
+
+파일·TTS 워커는 같은 로컬 연산 슬롯을 사용한다. 모델은 매 작업에서 로딩하고 종료 시 프로세스를
+회수한다. 기본 대기와 생성 제한은 각각 600초이며 MLX 메모리 목표는 6GiB다.
+`TTS_MEMORY_LIMIT_BYTES`는 MLX 할당기의 목표값으로 프로세스 전체 메모리의 강제 상한은 아니다.
+다른 실행 경로와의 전역 자원 예약·모델 유지 및 유휴 시간 관리 확대는 후속 작업이다.
+
+```sh
+RUN_TTS_SMOKE=1 .venv/bin/python scripts/check.py
+node scripts/ui-tts-check.cjs
+```
+
+실제 MLX 검사는 기본 목소리 생성 → 생성한 테스트 음성을 참조로 등록 → Base 음성 생성까지 확인한다.
+임시 DB와 테스트 경로를 사용하며 운영 플랫폼으로 완료 알림을 보내지 않는다.
+
+### 공통 검사
+
 ```sh
 .venv/bin/ruff check src tests scripts/run.py scripts/check.py scripts/configure_secret.py scripts/manage.py
 .venv/bin/python scripts/check.py

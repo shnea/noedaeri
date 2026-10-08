@@ -77,6 +77,8 @@ def test_catalog_contains_every_implemented_service_and_configuration_state(app)
     rows = {row["kind"]: row for row in client.get("/api/services").json()}
     assert {
         "image.package",
+        "tts.synthesize",
+        "tts.voice.register",
         "video.package",
         "video.thumbnail",
         "ai.workflow",
@@ -92,6 +94,7 @@ def test_catalog_contains_every_implemented_service_and_configuration_state(app)
         n8n_ai_webhook_url="https://workflow.example/ai",
         gemini_api_key="fixture-key",
         raya_enabled=True,
+        tts_enabled=True,
     )
     rows = {row["kind"]: row for row in client.get("/api/services").json()}
     assert all(row["available"] for row in rows.values())

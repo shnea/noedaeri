@@ -11,8 +11,16 @@ import httpx
 
 from .config import Settings
 from .execution import execution_lock
-from .media import JobCancelled, MediaError, run_process, thumbnail, video_package
+from .media import (
+    JobCancelled,
+    MediaError,
+    native_compute_slot,
+    run_process,
+    thumbnail,
+    video_package,
+)
 from .storage import Storage
+from .tts import normalize_reference, synthesize
 
 
 def run():
@@ -38,7 +46,10 @@ def run():
                     "/internal/claim",
                     json={
                         "worker_id": str(worker_id),
-                        "kinds": ["video.thumbnail", "video.package", "image.package"],
+                        "kinds": ["video.thumbnail", "video.package", "image.package"]
+                        + (
+                            ["tts.synthesize", "tts.voice.register"] if settings.tts_enabled else []
+                        ),
                     },
                 )
                 response.raise_for_status()
@@ -114,44 +125,18 @@ def run():
                         job_id = UUID(job["id"])
                         source = storage.path("uploads", job_id, "input")
                         output = storage.path("results", job_id, "thumbnail.jpg")
-                        if job["kind"] == "image.package":
-                            reserve(8_000_000)
-                            stage("image_processing")
-                            raw = run_process(
-                                [
-                                    sys.executable,
-                                    str(Path(__file__).with_name("images.py")),
-                                    str(source),
-                                    str(output.parent),
-                                    job["input"]["extension"],
-                                ],
-                                60,
-                                capacity_alive,
-                                capture=True,
-                            )
-                            result = json.loads(raw)
-                            if "error" in result:
-                                raise MediaError(result["error"])
-                        elif job["kind"] == "video.package":
-                            result = video_package(
+                        with native_compute_slot(storage.root, alive, stage, settings.native_wait):
+                            result = execute_job(
+                                settings,
+                                storage,
+                                job,
+                                client,
+                                lease,
                                 source,
-                                output.parent,
-                                job["options"]["seconds"],
-                                settings.video_timeout,
+                                output,
                                 capacity_alive,
                                 stage,
                                 reserve,
-                                encoder=settings.video_encoder,
-                                resource_root=storage.root,
-                            )
-                        else:
-                            reserve(2_097_152)
-                            thumbnail(
-                                source,
-                                output,
-                                job["options"]["seconds"],
-                                settings.job_timeout,
-                                capacity_alive,
                             )
                         if not capacity_alive():
                             raise JobCancelled()
@@ -161,17 +146,72 @@ def run():
                         status, code = "failed", str(error)
                     except (OSError, ValueError):
                         status, code = "failed", "worker_failed"
-                    # A lost lease never reports a result. The process has already been reaped.
                     if valid:
-                        client.post(
+                        response = client.post(
                             f"/internal/jobs/{job['id']}/finish",
                             json={**lease, "status": status, "error_code": code, "result": result},
-                        ).raise_for_status()
+                        )
+                        response.raise_for_status()
             except BlockingIOError:
                 time.sleep(1)
             except httpx.HTTPError:
-                logging.getLogger("noedaeri").error("worker_api_unavailable")
+                logging.warning("Worker connection failed; retrying")
                 time.sleep(2)
+
+
+def execute_job(settings, storage, job, client, lease, source, output, alive, stage, reserve):
+    result = None
+    if job["kind"] == "image.package":
+        reserve(8_000_000)
+        stage("image_processing")
+        raw = run_process(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("images.py")),
+                str(source),
+                str(output.parent),
+                job["input"]["extension"],
+            ],
+            60,
+            alive,
+            capture=True,
+        )
+        result = json.loads(raw)
+        if "error" in result:
+            raise MediaError(result["error"])
+    elif job["kind"] == "video.package":
+        result = video_package(
+            source,
+            output.parent,
+            job["options"]["seconds"],
+            settings.video_timeout,
+            alive,
+            stage,
+            reserve,
+            encoder=settings.video_encoder,
+            resource_root=storage.root,
+        )
+    elif job["kind"] == "video.thumbnail":
+        reserve(2_097_152)
+        thumbnail(
+            source,
+            output,
+            job["options"]["seconds"],
+            settings.job_timeout,
+            alive,
+        )
+    else:
+        profile = client.get(f"/internal/jobs/{job['id']}/voice", params={"token": lease["token"]})
+        if profile.status_code != 200:
+            raise JobCancelled()
+        if job["kind"] == "tts.voice.register":
+            reserve(3_000_000)
+            stage("voice_reference_validation")
+            result = normalize_reference(source, output.parent / "reference.wav", alive)
+        else:
+            reserve(32_000_000)
+            result = synthesize(settings, storage, job, profile.json(), alive, stage)
+    return result
 
 
 if __name__ == "__main__":

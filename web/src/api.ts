@@ -47,13 +47,33 @@ export const serviceSchema = z.object({
   label: z.string(),
   input_type: z.string(),
   interface: z
-    .enum(["media", "ai", "raya", "embedding", "indexing", "search"])
+    .enum(["media", "ai", "raya", "embedding", "indexing", "search", "tts"])
     .default("media"),
   available: z.boolean().default(true),
   task_types: z
     .array(z.object({ value: z.string(), label: z.string() }))
     .default([]),
 });
+
+export const voiceSchema = z.object({
+  id: z.string(),
+  owner_id: z.string(),
+  name: z.string(),
+  kind: z.enum(["preset", "clone"]),
+  speaker: z.string().nullable(),
+  requester_id: z.string(),
+  project: z.string(),
+  environment: z.string(),
+  reference_text: z.string(),
+  status: z.string(),
+  registration_job_id: z.string().nullable(),
+  sample_bytes: z.number(),
+  sample_available: z.boolean().default(true),
+  error_code: z.string().nullable(),
+  created_at: z.string(),
+});
+
+export type Voice = z.infer<typeof voiceSchema>;
 
 export const memberSchema = z.object({
   id: z.string(),
@@ -271,7 +291,25 @@ const messages = new Map(
     storage_capacity_exceeded:
       "임시 저장 공간이 부족합니다. 결과 정리 후 다시 시도해 주세요.",
     upload_too_large: "업로드 한도를 초과했습니다.",
-    unsupported_media: "지원하지 않는 영상입니다.",
+    unsupported_media: "지원 형식과 입력 길이를 확인해 주세요.",
+    tts_not_configured:
+      "TTS 설치와 연결 설정이 필요합니다. 관리자에게 확인해 주세요.",
+    tts_generation_failed:
+      "음성 생성에 실패했습니다. 입력을 줄여 다시 시도해 주세요.",
+    tts_memory_unavailable:
+      "음성 모델을 실행할 메모리가 부족합니다. 다른 연산 종료 후 다시 시도해 주세요.",
+    voice_sample_missing:
+      "참조 음성을 찾을 수 없습니다. 목소리를 다시 등록해 주세요.",
+    voice_storage_unavailable:
+      "목소리 저장소가 연결되지 않았습니다. NAS 마운트를 확인해 주세요.",
+    voice_not_ready:
+      "목소리 등록이 아직 완료되지 않았습니다. 등록 작업 상태를 확인해 주세요.",
+    voice_in_use:
+      "이 목소리를 사용하는 작업이 있습니다. 종료 또는 취소를 확인한 후 삭제해 주세요.",
+    voice_storage_capacity_exceeded:
+      "목소리 저장 공간이 부족합니다. 사용하지 않는 목소리를 삭제해 주세요.",
+    clone_style_not_supported:
+      "등록한 참조 음성에는 말투 지시를 사용할 수 없습니다.",
     invalid_job_options: "작업 옵션을 확인해 주세요.",
     invalid_media_or_conversion_failed: "영상을 읽거나 변환하지 못했습니다.",
     hardware_encoding_failed:

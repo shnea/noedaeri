@@ -9,7 +9,13 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 
-from .execution import hardware_encoder_lock, inherited_encoder_lock, inherited_lock
+from .execution import (
+    hardware_encoder_lock,
+    inherited_compute_lock,
+    inherited_encoder_lock,
+    inherited_lock,
+    native_compute_lock,
+)
 
 
 class MediaError(Exception):
@@ -37,7 +43,13 @@ def run_process(
         start_new_session=True,
         env=env,
         pass_fds=tuple(
-            fd for fd in (inherited_lock.get(), inherited_encoder_lock.get()) if fd is not None
+            fd
+            for fd in (
+                inherited_lock.get(),
+                inherited_encoder_lock.get(),
+                inherited_compute_lock.get(),
+            )
+            if fd is not None
         ),
     ) as process:
         deadline = time.monotonic() + timeout
@@ -63,6 +75,31 @@ def run_process(
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
+
+
+@contextmanager
+def native_compute_slot(root, alive, stage, wait_seconds):
+    deadline = time.monotonic() + wait_seconds
+    waiting = False
+    while True:
+        if not alive():
+            raise JobCancelled()
+        lock = native_compute_lock(root)
+        try:
+            lock.__enter__()
+        except BlockingIOError:
+            if not waiting:
+                stage("waiting_native_compute")
+                waiting = True
+            if time.monotonic() >= deadline:
+                raise MediaError("processing_timeout") from None
+            time.sleep(0.2)
+            continue
+        try:
+            yield
+        finally:
+            lock.__exit__(None, None, None)
+        return
 
 
 def thumbnail(source: Path, output: Path, seconds: float, timeout: int, alive: Callable[[], bool]):

@@ -7,6 +7,20 @@ from uuid import UUID
 
 inherited_lock = ContextVar("inherited_lock", default=None)
 inherited_encoder_lock = ContextVar("inherited_encoder_lock", default=None)
+inherited_compute_lock = ContextVar("inherited_compute_lock", default=None)
+
+
+@contextmanager
+def native_compute_lock(root):
+    folder = root / "locks"
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (folder / "native-compute.lock").open("a+b") as file:
+        fcntl.flock(file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        token = inherited_compute_lock.set(file.fileno())
+        try:
+            yield
+        finally:
+            inherited_compute_lock.reset(token)
 
 
 @contextmanager

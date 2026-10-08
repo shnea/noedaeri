@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -38,6 +39,38 @@ class ImageOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SpeechInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    type: Literal["text"]
+    text: str = Field(min_length=1, max_length=4000)
+    language: Literal[
+        "Korean",
+        "English",
+        "Japanese",
+        "Chinese",
+        "German",
+        "French",
+        "Russian",
+        "Portuguese",
+        "Spanish",
+        "Italian",
+    ] = "Korean"
+    requester_id: str | None = Field(default=None, min_length=1, max_length=128)
+    project: str = Field(default="default", min_length=1, max_length=128)
+    environment: str = Field(default="production", min_length=1, max_length=128)
+
+
+class SpeechOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    voice_id: UUID
+    instruct: str = Field(default="", max_length=300)
+
+
+class VoiceRegistrationOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    voice_id: UUID
+
+
 @dataclass(frozen=True)
 class Service:
     kind: str
@@ -51,6 +84,25 @@ class Service:
 
 
 SERVICES = {
+    "tts.synthesize": Service(
+        "tts.synthesize",
+        "tts",
+        "텍스트 음성 생성",
+        "text",
+        SpeechOptions,
+        "speech.wav",
+        "audio/wav",
+        SpeechInput,
+    ),
+    "tts.voice.register": Service(
+        "tts.voice.register",
+        "tts",
+        "목소리 등록 · 참조 음성 검증",
+        "upload",
+        VoiceRegistrationOptions,
+        "reference.wav",
+        "audio/wav",
+    ),
     "image.package": Service(
         "image.package",
         "image",
@@ -99,8 +151,8 @@ def service_catalog(settings):
             "label": item.label,
             "input_type": item.input_type,
             "options_schema": item.options.model_json_schema(),
-            "interface": "media",
-            "available": True,
+            "interface": "tts" if item.service == "tts" else "media",
+            "available": settings.tts_enabled if item.service == "tts" else True,
         }
         for item in SERVICES.values()
     ]

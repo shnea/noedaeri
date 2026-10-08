@@ -7,6 +7,7 @@ import { VideoResult } from "./VideoResult";
 import { AiUsagePanel } from "./AiUsagePanel";
 import { TaskDetails } from "./TaskDetails";
 import { EmbeddingRagPanel } from "./EmbeddingRagPanel";
+import { VoicePanel } from "./VoicePanel";
 import {
   jobSchema,
   aiJobSchema,
@@ -99,6 +100,12 @@ function Details({
           "다른 작업이 하드웨어 인코더를 사용 중입니다. 종료 후 시작합니다.",
         ],
         ["image_processing", "이미지 검사·썸네일·미리보기 생성 중"],
+        ["voice_reference_validation", "참조 음성 검증·정규화 중"],
+        ["tts_loading_and_synthesis", "목소리 모델 로딩·음성 생성 중"],
+        [
+          "waiting_native_compute",
+          "다른 파일·음성 작업이 자원을 사용 중입니다. 종료 후 시작합니다.",
+        ],
         ["packaging", "결과 묶음 생성 중"],
       ]).get(job.stage);
 
@@ -182,7 +189,7 @@ function Details({
           <span className="muted">
             {job.finished_at ? `종료 ${date(job.finished_at)}` : job.kind}
           </span>
-          {["queued", "running"].includes(job.status) && (
+          {["uploading", "queued", "running"].includes(job.status) && (
             <button
               className="danger"
               disabled={job.cancel_requested}
@@ -238,7 +245,11 @@ function Details({
         )}
         {job.origin !== "platform" &&
           ["failed", "cancelled"].includes(job.status) && (
-            <button onClick={retry}>입력 다시 올려 재시도</button>
+            <button onClick={retry}>
+              {job.service === "tts"
+                ? "목소리·입력 확인 후 재시도"
+                : "입력 다시 올려 재시도"}
+            </button>
           )}
         {job.retry_of && (
           <p className="muted">이전 작업 {job.retry_of.slice(0, 8)}의 재시도</p>
@@ -321,6 +332,15 @@ function Details({
                 />
               </a>
             )}
+            {job.service === "tts" && (
+              <audio
+                aria-label="생성된 음성"
+                controls
+                preload="metadata"
+                className="speech-result"
+                src={`/api/jobs/${job.id}/result`}
+              />
+            )}
             {!artifact.success &&
               !videoPackage.success &&
               !imagePackage.success &&
@@ -378,7 +398,10 @@ function NewTask({
   }, [retryJob]);
 
   const [kind, setKind] = useState(
-    retryJob?.kind ?? (initialKind || services[0]?.kind || ""),
+    retryJob?.kind ??
+      (initialKind ||
+        services.find((item) => item.interface === "media")?.kind ||
+        ""),
   );
 
   const [title, setTitle] = useState(retryJob?.title ?? "");
@@ -819,6 +842,7 @@ export default function App() {
       ? [
           "작업",
           "서비스",
+          "TTS·목소리",
           "사용량",
           "임베딩·RAG",
           "Raya",
@@ -826,7 +850,7 @@ export default function App() {
           "워커",
           "사용자",
         ]
-      : ["작업", "서비스", "사용량", "임베딩·RAG", "연동 지침"];
+      : ["작업", "서비스", "TTS·목소리", "사용량", "임베딩·RAG", "연동 지침"];
 
   return (
     <>
@@ -929,17 +953,19 @@ export default function App() {
                     ? "요청한 작업의 대기, 실행, 결과를 한곳에서 확인합니다."
                     : tab === "서비스"
                       ? "현재 실행할 수 있는 작업 종류입니다."
-                      : tab === "사용량"
-                        ? "공급자와 모델별 호출 수·토큰 사용량을 확인합니다."
-                        : tab === "임베딩·RAG"
-                          ? "문서 색인과 검색을 테스트하고 컬렉션을 관리합니다."
-                          : tab === "Raya"
-                            ? "요청 난이도 판단과 모델 실행 정책을 확인합니다."
-                            : tab === "연동 지침"
-                              ? "기능별 호출 방법과 현재 연결 가능한 범위를 확인합니다."
-                              : tab === "워커"
-                                ? "워커의 마지막 연결 상태를 확인합니다."
-                                : "플랫폼으로 로그인한 사용자의 접근을 관리합니다."}
+                      : tab === "TTS·목소리"
+                        ? "목소리를 등록·관리하고 선택한 목소리로 음성을 만듭니다."
+                        : tab === "사용량"
+                          ? "공급자와 모델별 호출 수·토큰 사용량을 확인합니다."
+                          : tab === "임베딩·RAG"
+                            ? "문서 색인과 검색을 테스트하고 컬렉션을 관리합니다."
+                            : tab === "Raya"
+                              ? "요청 난이도 판단과 모델 실행 정책을 확인합니다."
+                              : tab === "연동 지침"
+                                ? "기능별 호출 방법과 현재 연결 가능한 범위를 확인합니다."
+                                : tab === "워커"
+                                  ? "워커의 마지막 연결 상태를 확인합니다."
+                                  : "플랫폼으로 로그인한 사용자의 접근을 관리합니다."}
                 </p>
               </div>
               {tab === "작업" && (
@@ -955,6 +981,23 @@ export default function App() {
               )}
             </div>
             {tab === "사용량" && <AiUsagePanel key={user.id} />}
+            {tab === "TTS·목소리" && (
+              <VoicePanel
+                key={user.id}
+                user={user}
+                enabled={services.some(
+                  (item) => item.service === "tts" && item.available,
+                )}
+                showJobs={() => {
+                  setTab("작업");
+                  setCreating(false);
+                  setServiceFilter("all");
+                  setFilter("all");
+                  setOffset(0);
+                  void refresh();
+                }}
+              />
+            )}
             {tab === "임베딩·RAG" && (
               <EmbeddingRagPanel
                 key={`${user.id}:${ragView}`}
@@ -1122,8 +1165,14 @@ export default function App() {
                                         void redeliver(job.data);
                                       }}
                                       retry={() => {
-                                        setRetryJob(job.data);
-                                        setCreating(true);
+                                        if (job.service === "tts") {
+                                          setTab("TTS·목소리");
+                                          setCreating(false);
+                                        } else {
+                                          setRetryJob(job.data);
+                                          setCreating(true);
+                                        }
+
                                         window.scrollTo({ top: 0 });
                                       }}
                                       job={job.data}
@@ -1163,7 +1212,9 @@ export default function App() {
                           : "새 작업에서 서비스를 선택하고 첫 연산을 요청하세요."}
                     </p>
                     {offset > 0 ? (
-                      <button onClick={() => setOffset(Math.max(0, offset - 100))}>
+                      <button
+                        onClick={() => setOffset(Math.max(0, offset - 100))}
+                      >
                         이전 목록으로
                       </button>
                     ) : filter !== "all" || serviceFilter !== "all" ? (
@@ -1248,6 +1299,9 @@ export default function App() {
                             setNewKind(service.kind);
                             setTab("작업");
                             setCreating(true);
+                          } else if (service.interface === "tts") {
+                            setCreating(false);
+                            setTab("TTS·목소리");
                           } else if (service.interface === "raya") {
                             setTab("Raya");
                           } else {

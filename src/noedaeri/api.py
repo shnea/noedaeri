@@ -32,6 +32,7 @@ from .raya import Raya, install_raya_routes
 from .services import SERVICES, service_catalog
 from .storage import Storage
 from .tasks import cleanup_operation_results, list_tasks
+from .voices import SAMPLE_LIMIT, Voices, install_voice_routes
 
 
 class NewJob(BaseModel):
@@ -65,6 +66,11 @@ class Finish(Lease):
             "result_missing",
             "worker_failed",
             "storage_capacity_exceeded",
+            "tts_not_configured",
+            "tts_generation_failed",
+            "tts_memory_unavailable",
+            "voice_sample_missing",
+            "voice_storage_unavailable",
         ]
         | None
     ) = None
@@ -214,6 +220,8 @@ def create_app(settings: Settings | None = None):
     app.state.db, app.state.queue, app.state.storage = db, queue, storage
     app.state.webhooks = webhooks
     app.state.raya = raya
+    voices = Voices(db, settings, storage)
+    app.state.voices = voices
 
     def principal(request):
         if request.url.path.startswith("/api/v1/"):
@@ -229,6 +237,7 @@ def create_app(settings: Settings | None = None):
     install_embedding_routes(app, settings, auth, principal, db)
     install_ai_job_routes(app, db, auth, settings)
     install_indexing_routes(app, db, auth, settings)
+    install_voice_routes(app, voices, principal)
 
     def present(job):
         data = public_job(job)
@@ -389,14 +398,25 @@ def create_app(settings: Settings | None = None):
         service = SERVICES.get(data.kind)
         if not service:
             raise HTTPException(422, "unsupported_job_kind")
+        if data.kind == "tts.voice.register":
+            raise HTTPException(422, "voice_registration_endpoint_required")
+        if service.service == "tts" and not getattr(app.state, "settings", settings).tts_enabled:
+            raise HTTPException(503, "tts_not_configured")
         try:
-            options = service.options.model_validate(data.options).model_dump()
+            options = service.options.model_validate(data.options).model_dump(mode="json")
         except ValidationError:
             raise HTTPException(422, "invalid_job_options") from None
         try:
-            service.input_model.model_validate(data.input)
+            data.input = service.input_model.model_validate(data.input).model_dump(mode="json")
         except ValidationError:
             raise HTTPException(422, "invalid_job_input") from None
+        if data.kind == "tts.synthesize":
+            requester_id = data.input["requester_id"]
+            if user["role"] == "service" and not requester_id:
+                raise HTTPException(422, "requester_id_required")
+            if user["role"] == "user" and requester_id and requester_id != str(user["id"]):
+                raise HTTPException(403, "requester_id_mismatch")
+            data.input["requester_id"] = requester_id or str(user["id"])
         with db.connect() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(756903)")
             existing = conn.execute(
@@ -429,13 +449,18 @@ def create_app(settings: Settings | None = None):
                     raise HTTPException(409, "retry_not_safe") from None
                 if original["kind"] != data.kind:
                     raise HTTPException(422, "invalid_job_kind")
+            if data.kind == "tts.synthesize":
+                voices.resolve(conn, user, options["voice_id"], data.input, options["instruct"])
             reserved = conn.execute(
                 "SELECT COALESCE(sum(CASE WHEN status='uploading' THEN %s ELSE input_bytes END "
                 "+output_reserved),0) "
                 "AS bytes FROM jobs WHERE cleanup_state<>'done'",
                 (settings.upload_limit,),
             ).fetchone()["bytes"]
-            if not storage.available(reserved + settings.upload_limit):
+            incoming = settings.upload_limit
+            if service.service == "tts":
+                incoming = min(settings.upload_limit, 32_000_000)
+            if not storage.available(reserved + incoming):
                 raise HTTPException(507, "storage_capacity_exceeded")
             job = conn.execute(
                 "INSERT INTO jobs(id, owner_id, idempotency_key, kind, service, title, input, "
@@ -489,7 +514,12 @@ def create_app(settings: Settings | None = None):
                         if shutil.disk_usage(storage.root).free < settings.free_floor + len(chunk):
                             raise HTTPException(507, "storage_capacity_exceeded")
                         size += len(chunk)
-                        if size > settings.upload_limit:
+                        limit = (
+                            min(settings.upload_limit, SAMPLE_LIMIT)
+                            if job["kind"] == "tts.voice.register"
+                            else settings.upload_limit
+                        )
+                        if size > limit:
                             raise HTTPException(413, "upload_too_large")
                         target.write(chunk)
                 if not size:
@@ -689,18 +719,50 @@ def create_app(settings: Settings | None = None):
                         raise ValueError()
                 except (ValueError, TypeError):
                     raise HTTPException(409, "result_missing") from None
-            if service.result_filename:
+            if service.result_filename and job["kind"] != "tts.voice.register":
                 path = storage.path("results", job_id, service.result_filename)
                 if not path.is_file():
                     raise HTTPException(409, "result_missing")
                 result_data = {
+                    **((result_data or {}) if job["kind"] == "tts.synthesize" else {}),
                     "type": "artifact",
                     "name": service.result_filename,
                     "media_type": service.result_media_type,
                 }
-        if not queue.finish(job_id, data.token, data.status, data.error_code, result_data):
+        with db.connect() as conn:
+            job = conn.execute("SELECT kind FROM jobs WHERE id=%s", (job_id,)).fetchone()
+        on_success = voices.activate if job and job["kind"] == "tts.voice.register" else None
+        if not queue.finish(
+            job_id, data.token, data.status, data.error_code, result_data, on_success
+        ):
             raise HTTPException(409, "lease_lost")
         return {"accepted": True}
+
+    @app.get("/internal/jobs/{job_id}/voice")
+    def worker_voice(request: Request, job_id: UUID, token: UUID):
+        worker(request)
+        with db.connect() as conn:
+            job = conn.execute(
+                "SELECT * FROM jobs WHERE id=%s AND lease_token=%s AND status='running' "
+                "AND lease_until>now() AND NOT cancel_requested",
+                (job_id, token),
+            ).fetchone()
+            if not job or job["kind"] not in {"tts.synthesize", "tts.voice.register"}:
+                raise HTTPException(409, "lease_lost")
+            row = conn.execute(
+                "SELECT * FROM voices WHERE id=%s", (job["options"]["voice_id"],)
+            ).fetchone()
+            if not row or row["status"] in {"deleted", "cleanup_failed"}:
+                raise HTTPException(409, "voice_sample_missing")
+            if job["kind"] == "tts.voice.register":
+                if row["registration_job_id"] != job_id:
+                    raise HTTPException(409, "voice_sample_missing")
+            elif row["status"] != "ready":
+                raise HTTPException(409, "voice_sample_missing")
+            return {
+                key: row[key]
+                for key in ("id", "kind", "speaker", "reference_text", "sample_sha256")
+            }
 
     web_root = Path(__file__).resolve().parents[2] / "web" / "dist"
     if (web_root / "assets").is_dir():

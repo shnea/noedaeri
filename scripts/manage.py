@@ -22,7 +22,7 @@ from psycopg.conninfo import make_conninfo
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "config/runtime.enc.env"
-COMPONENTS = ("database", "api", "worker", "proxy")
+COMPONENTS = ("database", "storage", "api", "worker", "proxy")
 
 
 def execute(command, *, env=None, input=None, required=True):
@@ -105,7 +105,14 @@ def loaded(component):
 
 
 def write_agents(values):
+    if values.get("SERVICE_STORAGE_SMB_URL"):
+        helper = Path(values["STATE_ROOT"]) / "tools/mount-nas"
+        helper.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        execute(["swiftc", str(ROOT / "scripts/mount_nas.swift"), "-o", str(helper)])
+        helper.chmod(0o700)
     for component in COMPONENTS:
+        if component == "storage" and not values.get("SERVICE_STORAGE_SMB_URL"):
+            continue
         path = plist_path(component)
         path.parent.mkdir(parents=True, exist_ok=True)
         arguments = [sys.executable, str(ROOT / "scripts/manage.py"), "serve", component]
@@ -300,6 +307,11 @@ def serve(component):
     # launchd does not inherit the interactive shell locale. PostgreSQL on macOS
     # requires an explicit locale before starting its child processes.
     env = dict(os.environ, PATH=values["EXEC_PATH"], LC_ALL="C", LANG="C")
+    if component == "storage":
+        from nas_watch import watch
+
+        watch(values)
+        return
     if component == "database":
         args = [
             str(Path(values["PG_BIN"]) / "postgres"),
@@ -330,6 +342,9 @@ def serve(component):
 
 def status(values):
     for component in COMPONENTS:
+        if component == "storage" and not values.get("SERVICE_STORAGE_SMB_URL"):
+            print("storage: not configured")
+            continue
         result = execute(["launchctl", "print", domain() + "/" + label(component)], required=False)
         text = result.stdout.decode()
         running = result.returncode == 0 and "state = running" in text
@@ -395,7 +410,9 @@ def main():
             "config/runtime.enc.env",
         ]
     )
-    for component in ("api", "worker", "proxy"):
+    for component in ("storage", "api", "worker", "proxy"):
+        if component == "storage" and not values.get("SERVICE_STORAGE_SMB_URL"):
+            continue
         start_component(component)
     print("Services loaded into the current login session; verify with status.")
 

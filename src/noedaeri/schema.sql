@@ -50,6 +50,26 @@ CREATE TABLE IF NOT EXISTS deliveries (
 );
 CREATE INDEX IF NOT EXISTS deliveries_pending ON deliveries(next_attempt_at) WHERE state='pending';
 
+CREATE TABLE IF NOT EXISTS voices (
+ id uuid PRIMARY KEY,
+ owner_id uuid NOT NULL REFERENCES users(id),
+ idempotency_key uuid NOT NULL,
+ requester_id text NOT NULL,
+ project text NOT NULL,
+ environment text NOT NULL,
+ name text NOT NULL,
+ kind text NOT NULL CHECK(kind IN ('preset','clone')),
+ speaker text,
+ reference_text text NOT NULL DEFAULT '',
+ registration_job_id uuid REFERENCES jobs(id),
+ status text NOT NULL CHECK(status IN ('pending','ready','deleted','cleanup_failed')),
+ sample_bytes bigint NOT NULL DEFAULT 0,
+ sample_sha256 text,
+ created_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(owner_id,idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS voices_scope ON voices(owner_id,requester_id,project,environment);
+
 CREATE TABLE IF NOT EXISTS raya_policy (
  singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
  minimum_keep_seconds integer NOT NULL CHECK(minimum_keep_seconds BETWEEN 0 AND 86400),
