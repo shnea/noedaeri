@@ -12,13 +12,17 @@
 | 영상 파생물 | 같은 경로, `video.package` | upload, 플랫폼의 해상도 설정 | 썸네일·해상도별 HLS·manifest ZIP |
 | 영상 썸네일 | 같은 경로, `video.thumbnail` | upload, `seconds` | JPEG |
 | TTS | 같은 경로, `tts.synthesize` | text, language·requester_id·선택 voice_id | WAV·합성 정보 ZIP |
-| 목소리 등록 | `POST /api/v1/tts/voices` | requester_id·project·environment, 프리셋 또는 등록 음성 | 프로필. 복제 음성의 참조 파일은 서비스 NAS에 보존 |
+| 목소리 등록 | `POST /api/v1/voices` | requester_id·project·environment, 프리셋 또는 등록 음성 | 프로필. 복제 음성의 참조 파일은 서비스 NAS에 보존 |
 | STT | `POST /api/v1/jobs`, `stt.transcribe` | upload, language·use_itn | 전사 JSON/TXT ZIP |
 | 이미지 OCR | 같은 경로, `ocr.recognize` | upload, language·language_correction | OCR JSON/TXT ZIP |
 | PDF | 같은 경로, `pdf.extract` | upload, mode=auto/text/ocr·language·language_correction | 문서·페이지별 JSON/TXT ZIP |
 | 영상 자막 | 같은 경로, `video.subtitles` | upload, language·use_itn | 전사 JSON/TXT·SRT·VTT ZIP |
 | 문장 번역 | `POST /api/v1/translations` | text·source_language·target_language·request_id·project·environment | AI Job JSON·번역 TXT |
 | 기존 AI 작업 | `POST /api/v1/ai/jobs` | task_type·prompt·input·request_id·project·environment | AI Job JSON·사용량 |
+
+목소리 목록은 `GET /api/v1/voices`, 상세·이름 수정·삭제는
+`GET/PATCH/DELETE /api/v1/voices/{voice_id}`를 사용한다. 목소리 API의 기본 경로는
+복수형 `/api/v1/voices`이며 `/api/v1/tts/voice`·`/api/v1/tts/voices`·`/api/v1/voice`는 제공하지 않는다.
 
 파일 기반 요청은 접수 ID를 저장한 뒤 `PUT /api/v1/jobs/{id}/input`으로 원본 바이트를 보낸다.
 원본은 플랫폼이 보관하고 권한을 확인한다. 결과를 새 플랫폼 원본으로 등록할 필요는 없으며,
