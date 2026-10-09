@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 RESULT_LIMIT = 4 * 1024**2
 
 
-def transcribe(settings, storage, job, alive, stage, reserve):
+def transcribe(settings, storage, job, alive, stage, reserve, *, normalize_timeline=False):
     runtime = ROOT / "stt_runtime/.venv/bin/python"
     models = ROOT / "models/stt"
     if not runtime.is_file() or not all(
@@ -90,6 +90,7 @@ def transcribe(settings, storage, job, alive, stage, reserve):
             "1",
             "-ar",
             "16000",
+            *(["-af", "aresample=async=1:first_pts=0"] if normalize_timeline else []),
             "-c:a",
             "pcm_s16le",
             "-y",

@@ -9,7 +9,7 @@
 | 기능 | 접수 | 입력과 주요 옵션 | 결과 |
 |---|---|---|---|
 | 이미지 파생물 | `POST /api/v1/jobs`, `image.package` | upload, 원본 포맷 확장자 | 썸네일·미리보기·OG·manifest ZIP |
-| 영상 파생물 | 같은 경로, `video.package` | upload, 플랫폼의 해상도 설정 | 썸네일·해상도별 HLS·manifest ZIP |
+| 영상 파생물 | 같은 경로, `video.package` | upload·seconds, 선택 subtitles 옵션 | 썸네일·해상도별 HLS·manifest ZIP. 선택 시 자막 파일·영상에 자막 입히기 |
 | 영상 썸네일 | 같은 경로, `video.thumbnail` | upload, `seconds` | JPEG |
 | TTS | 같은 경로, `tts.synthesize` | text, language·requester_id·선택 voice_id | 단일 `speech.wav` + 웹훅·작업 조회 JSON의 합성 정보. ZIP 없음 |
 | 목소리 등록 | `POST /api/v1/voices` | requester_id·project·environment, 프리셋 또는 등록 음성 | 프로필. 복제 음성의 참조 파일은 서비스 NAS에 보존 |
@@ -36,7 +36,10 @@ TTS에는 `/files/speech.wav` 경로를 사용하지 않는다.
 
 기본 파일 업로드 한도 5 GiB, 이미지/OCR 200 MB, PDF 200 MB·100페이지다. 유효 한도는
 `GET /api/v1/services`에서 읽는다. 설정으로 변경 가능하며 픽셀·처리 시간·여유 공간 제한은
-바이트 제한과 별개다. PDF와 SRT/VTT는 자막 번역·영상 자막 입히기 기능을 포함하지 않는다.
+바이트 제한과 별개다. `video.subtitles`는 자막 파일 생성이며 영상에 글자를 넣지 않는다.
+영상에 자막을 입히는 선택 확장은 `video.package`의 `subtitles.mode:burned`로 요청한다.
+기존 연결을 마친 뒤 옵션을 추가할 수 있으며 생략 시 기존 동작을 유지한다. 자세한 계약은
+연동 지침의 ‘영상에 자막 입히기 · 선택 확장’을 따른다. 자막 번역은 포함하지 않는다.
 자막 시각은 VAD 구간에 비례한 근삿값이며 단어별 강제 정렬이 아니다.
 
 ## 키와 설정

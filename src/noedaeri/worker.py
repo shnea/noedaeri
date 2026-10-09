@@ -207,6 +207,22 @@ def execute_job(settings, storage, job, client, lease, source, output, alive, st
         if "error" in result:
             raise MediaError(result["error"])
     elif job["kind"] == "video.package":
+        subtitles = job["options"].get("subtitles")
+
+        def prepare_subtitles(reserve_extra, subtitle_alive):
+            if not settings.stt_enabled:
+                raise MediaError("stt_not_configured")
+            return create_subtitles(
+                settings,
+                storage,
+                {**job, "options": subtitles},
+                subtitle_alive,
+                stage,
+                reserve_extra,
+                archive=False,
+                align_video=True,
+            )
+
         result = video_package(
             source,
             output.parent,
@@ -217,6 +233,8 @@ def execute_job(settings, storage, job, client, lease, source, output, alive, st
             reserve,
             encoder=settings.video_encoder,
             resource_root=storage.root,
+            subtitle_mode=subtitles["mode"] if subtitles else "none",
+            prepare_subtitles=prepare_subtitles if subtitles else None,
         )
     elif job["kind"] == "video.thumbnail":
         reserve(2_097_152)

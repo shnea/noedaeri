@@ -28,6 +28,14 @@ export const jobSchema = z.object({
       language: z.string().optional(),
       use_itn: z.boolean().optional(),
       language_correction: z.boolean().optional(),
+      subtitles: z
+        .object({
+          mode: z.enum(["sidecar", "burned"]),
+          language: z.string(),
+          use_itn: z.boolean(),
+        })
+        .nullable()
+        .optional(),
     })
     .optional(),
   id: z.string(),
@@ -50,6 +58,17 @@ export const jobSchema = z.object({
 });
 
 export const serviceSchema = z.object({
+  subtitle_support: z
+    .object({
+      sidecar: z.boolean(),
+      burned: z.boolean(),
+      max_duration_seconds: z.number(),
+      transcription_timeout_seconds: z.number(),
+      total_timeout_seconds: z.number(),
+      timing: z.string(),
+    })
+    .nullable()
+    .optional(),
   pdf_limits: z
     .object({
       max_input_bytes: z.number(),
@@ -407,6 +426,8 @@ const messages = new Map(
       "인식 결과가 한도를 넘었습니다. 이미지를 나눠서 다시 요청해 주세요.",
     stt_not_configured:
       "STT 엔진 설치·활성화가 필요합니다. 관리자에게 확인해 주세요.",
+    subtitle_renderer_unavailable:
+      "영상에 자막을 입힐 수 없습니다. 관리자에게 libass 지원 FFmpeg 설정을 확인해 주세요.",
     stt_transcription_failed:
       "음성 인식에 실패했습니다. 지원 형식과 입력 상태를 확인해 주세요.",
     stt_duration_exceeded:

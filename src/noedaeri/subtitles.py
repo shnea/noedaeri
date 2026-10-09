@@ -51,10 +51,18 @@ def timestamp(value, separator):
     return f"{hours:02}:{minutes:02}:{seconds:02}{separator}{milliseconds:03}"
 
 
-def create_subtitles(settings, storage, job, alive, stage, reserve):
+def create_subtitles(
+    settings, storage, job, alive, stage, reserve, *, archive=True, align_video=False
+):
     deadline = time.monotonic() + settings.stt_timeout
     result = transcribe(
-        settings, storage, job, alive, stage, lambda size: reserve(size + 24 * 1024**2)
+        settings,
+        storage,
+        job,
+        alive,
+        stage,
+        lambda size: reserve(size + 24 * 1024**2),
+        **({"normalize_timeline": True} if align_video else {}),
     )
     folder = storage.path("results", UUID(job["id"]), "transcript.json").parent
     transcript = json.loads((folder / "transcript.json").read_text())
@@ -78,20 +86,21 @@ def create_subtitles(settings, storage, job, alive, stage, reserve):
             raise MediaError("stt_result_too_large")
         (folder / name).write_text(content, encoding="utf-8")
     names = ["transcript.json", "transcript.txt", "subtitles.srt", "subtitles.vtt"]
-    stage("packaging")
-    with zipfile.ZipFile(folder / "subtitles.zip", "w", zipfile.ZIP_DEFLATED) as archive:
-        for name in names:
-            if not alive():
-                raise JobCancelled()
-            if time.monotonic() >= deadline:
-                raise MediaError("processing_timeout")
-            archive.write(folder / name, name)
+    if archive:
+        stage("packaging")
+        with zipfile.ZipFile(folder / "subtitles.zip", "w", zipfile.ZIP_DEFLATED) as bundle:
+            for name in names:
+                if not alive():
+                    raise JobCancelled()
+                if time.monotonic() >= deadline:
+                    raise MediaError("processing_timeout")
+                bundle.write(folder / name, name)
     (folder / "transcript.zip").unlink(missing_ok=True)
     return {
         **result,
         "type": "video_subtitles",
         "timing": "vad_proportional",
         "cue_count": len(cues),
-        "files": [*names, "subtitles.zip"],
+        "files": [*names, "subtitles.zip"] if archive else names,
         "elapsed_seconds": round(settings.stt_timeout - (deadline - time.monotonic()), 3),
     }

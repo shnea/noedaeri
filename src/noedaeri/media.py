@@ -7,6 +7,7 @@ import subprocess
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 
 from .execution import (
@@ -32,9 +33,14 @@ def run_process(
     alive: Callable[[], bool],
     capture=False,
     failure_code="invalid_media_or_conversion_failed",
+    cwd=None,
 ):
     # No inherited credentials, shell, network protocols, or unbounded stderr buffers.
     env = {"PATH": os.environ.get("PATH", ""), "LANG": "C", "AV_LOG_FORCE_NOCOLOR": "1"}
+    if args[0] in {"ffmpeg", "ffprobe"}:
+        binary = os.environ.get("FFMPEG_BINARY" if args[0] == "ffmpeg" else "FFPROBE_BINARY")
+        if binary:
+            args = [binary, *args[1:]]
     with subprocess.Popen(
         args,
         stdin=subprocess.DEVNULL,
@@ -42,6 +48,7 @@ def run_process(
         stderr=subprocess.DEVNULL,
         start_new_session=True,
         env=env,
+        cwd=cwd,
         pass_fds=tuple(
             fd
             for fd in (
@@ -75,6 +82,21 @@ def run_process(
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.wait()
+
+
+def subtitle_renderer_available():
+    return _subtitle_renderer_available(os.environ.get("FFMPEG_BINARY", "ffmpeg"))
+
+
+@lru_cache(maxsize=4)
+def _subtitle_renderer_available(binary):
+    try:
+        output = run_process([binary, "-hide_banner", "-filters"], 5, lambda: True, capture=True)
+        return any(
+            len(row.split()) > 1 and row.split()[1] == b"subtitles" for row in output.splitlines()
+        )
+    except (OSError, MediaError):
+        return False
 
 
 @contextmanager
@@ -218,10 +240,19 @@ def video_package(
     *,
     encoder="auto",
     resource_root=None,
+    subtitle_mode="none",
+    prepare_subtitles=None,
 ):
     """Produce flat, relative HLS paths suitable for authenticated delivery or export."""
     if encoder not in {"auto", "libx264", "h264_videotoolbox"}:
         raise MediaError("unsupported_video_encoder")
+    if subtitle_mode not in {"none", "sidecar", "burned"}:
+        raise MediaError("invalid_job_options")
+    if subtitle_mode != "none" and prepare_subtitles is None:
+        raise MediaError("stt_not_configured")
+    if subtitle_mode == "burned" and not subtitle_renderer_available():
+        raise MediaError("subtitle_renderer_unavailable")
+    source, folder = Path(source).resolve(), Path(folder).resolve()
     try:
         folder.mkdir(parents=True, exist_ok=False, mode=0o700)
     except FileExistsError:
@@ -294,6 +325,17 @@ def video_package(
     )
     stage("reserving")
     reserve(estimate)
+    subtitle_result = None
+    if subtitle_mode != "none":
+
+        def subtitle_alive():
+            remaining()
+            return alive()
+
+        subtitle_result = prepare_subtitles(lambda size: reserve(estimate + size), subtitle_alive)
+        remaining()
+        if not subtitle_alive():
+            raise JobCancelled()
     stage("thumbnail")
     thumbnail(source, folder / "thumbnail.jpg", seconds, remaining(), alive)
     master = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-INDEPENDENT-SEGMENTS"]
@@ -322,6 +364,14 @@ def video_package(
                 name = f"{level}p.m3u8"
                 bitrate = 1200 if level <= 480 else 2800 if level <= 720 else 5000
                 stage(f"encoding_{level}p")
+                filters = f"scale={w}:{h},setsar=1"
+                if subtitle_mode == "burned" and subtitle_result["cue_count"]:
+                    # Fixed local filename and style; no caller-controlled filter expression.
+                    filters += (
+                        ",subtitles=filename=subtitles.srt:"
+                        "force_style='FontName=Arial,FontSize=20,Alignment=2,"
+                        "Outline=2,Shadow=0,MarginV=16'"
+                    )
                 run_process(
                     [
                         "ffmpeg",
@@ -349,7 +399,7 @@ def video_package(
                         "-sn",
                         "-dn",
                         "-vf",
-                        f"scale={w}:{h},setsar=1",
+                        filters,
                         "-r",
                         "30",
                         "-c:v",
@@ -396,6 +446,7 @@ def video_package(
                         if selected_encoder == "h264_videotoolbox"
                         else "invalid_media_or_conversion_failed"
                     ),
+                    cwd=folder,
                 )
                 master.extend(
                     [
@@ -462,4 +513,19 @@ def video_package(
         "download": "video.zip",
         "variants": variants,
         "files": [*files, "video.zip"],
+        **(
+            {
+                "subtitles": {
+                    "mode": subtitle_mode,
+                    "language": subtitle_result["language"],
+                    "timing": subtitle_result["timing"],
+                    "cue_count": subtitle_result["cue_count"],
+                    "srt": "subtitles.srt",
+                    "vtt": "subtitles.vtt",
+                    "transcript": "transcript.json",
+                }
+            }
+            if subtitle_result is not None
+            else {}
+        ),
     }

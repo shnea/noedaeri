@@ -1,6 +1,6 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 27 · 기준일: 2026-10-10
+문서 버전: 28 · 기준일: 2026-10-10
 
 ## 플랫폼 연결 자료 · AI 완료 알림
 
@@ -396,7 +396,7 @@ Raya·임베딩·벡터 검색 HTTP 노드의 `X-Noedaeri-Compute-Token` 헤더�
 | 음성 인식 | `stt.transcribe` | SenseVoice INT8·Silero VAD·텍스트/구간 JSON/ZIP·Job·서명 완료 알림·웹 테스트 |
 | 이미지 통합 처리 | `image.package` | JPEG 썸네일·WebP 미리보기·ZIP 생성 가능 |
 | 영상 썸네일 | `video.thumbnail` | 웹 요청·결과 다운로드 가능 |
-| 통합 영상 처리 | `video.package` | 썸네일·해상도별 HLS·ZIP 생성 가능 |
+| 통합 영상 처리 | `video.package` | 썸네일·해상도별 HLS·ZIP, 선택 옵션으로 SRT/VTT 생성·자막 입히기 |
 | 플랫폼 서버 인증·요청 | `/api/v1/` | 전용 키 인증 구현, 수신 주소 설정 후 접수 |
 | 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
 | 공통 AI 작업 실행 | `/api/v1/ai/jobs` | 플랫폼 키 인증, 동기/비동기 n8n 연동 실행, 등록 작업·공통 RAG, 멱등 접수·웹 24시간/플랫폼 기본 7일 보존·선택형 완료 알림 |
@@ -1049,10 +1049,11 @@ if (job.status === 'uploading') {
 ## 통합 영상 처리
 
 작업 종류: `video.package` · 입력과 `seconds` 옵션은 썸네일과 같습니다.
+자막 옵션을 생략하거나 `subtitles:null`이면 기존 요청·결과 계약을 유지합니다.
 
 - 입력 검사·결과 공간 예약 → 썸네일 → 해상도별 변환 → HLS 재생 목록과 ZIP 생성 순서입니다.
 - 원본의 짧은 변을 기준으로 480p·720p·1080p 중 가능한 크기만 생성합니다. 작은 영상을 확대하지 않습니다. 480p 미만은 원본 짧은 변의 짝수 크기를 사용합니다.
-- 출력은 H.264/AAC, 30fps, 약 6초 단위 MPEG-TS VOD입니다. 오디오 없는 입력도 처리합니다.
+- 출력은 H.264/AAC, 30fps, 약 6초 단위 MPEG-TS VOD입니다. 자막을 선택하지 않으면 오디오 없는 입력도 처리합니다.
 - 해상도별 순차 변환합니다. 별도 입력 없이 기본 `auto`로 macOS VideoToolbox 하드웨어 디코딩·H.264 인코딩을 우선 시도하고, 가속 변환 실패 시 CPU로 한 번 전환합니다. 다른 OS는 CPU입니다. 크기 조정·썸네일은 CPU로 처리합니다. `FFMPEG_VIDEO_ENCODER`는 서버의 선택적 운영 설정이며 요청 `options`에는 넣지 않습니다.
 - 모든 단계가 끝나야 결과를 공개합니다. 단계별 부분 성공·이어하기는 아직 지원하지 않습니다.
 
@@ -1061,6 +1062,58 @@ if (job.status === 'uploading') {
 기본 `auto`에서는 하드웨어 실행이 실패하면 자식 종료·슬롯 반환을 확인하고 미완성 해상도별 출력을 삭제한 뒤 전체 해상도를 CPU로 한 번 재변환합니다. `cpu_fallback` 단계와 결과 `hardware_fallback=true`로 전환을 알립니다. CPU 재변환도 실패하면 작업을 실패로 종료합니다. 취소·시간 초과·저장 공간 부족은 CPU 재시도를 하지 않으며 전체 제한시간은 유지합니다. 서버 관리자가 `h264_videotoolbox`로 고정한 경우에는 CPU 전환 없이 `hardware_encoding_failed`로 종료하고, `libx264`는 CPU 고정입니다. 실패한 작업의 새 요청에는 새 작업 ID·원본 재업로드를 사용합니다.
 
 결과의 `video_encoder`에 실제 사용한 인코더, `hardware_fallback`에 가속 실패 후 CPU 전환 여부를 기록하고 웹에 표시합니다. 기존 결과에는 이 필드가 없을 수 있습니다. 인증·업로드 한도·다운로드·웹 24시간/플랫폼 별도 보존·저장 확인 계약은 동일하게 적용합니다.
+
+### 영상에 자막 입히기 · 선택 확장
+
+기존 플랫폼 연결을 마친 뒤 아래 옵션과 결과 필드만 추가해 사용할 수 있습니다.
+새 엔드포인트나 별도 STT Job 없이 기존 `POST /api/v1/jobs`·원본 업로드·`job.*` 서명 웹훅·
+결과 다운로드·receipt 흐름을 사용합니다. 요청 예시:
+
+```json
+{"kind":"video.package","title":"자동 자막 영상","idempotency_key":"<새 UUID>",
+ "input":{"type":"upload"},"options":{"seconds":0,
+ "subtitles":{"mode":"burned","language":"ko","use_itn":true}}}
+```
+
+| 옵션 | 동작 |
+|---|---|
+| `subtitles` 생략 또는 `null` | 기존 썸네일·해상도별 HLS·ZIP. STT 실행하지 않음 |
+| `subtitles.mode:sidecar` | 첫 오디오 트랙을 한 번 인식해 SRT/VTT·전사 JSON/TXT 생성. 영상에는 글자를 넣지 않음. 플랫폼 재생기가 VTT를 `<track>` 등으로 연결해야 자막 선택 가능. HLS master에 자막 트랙 자동 등록하지 않음 |
+| `subtitles.mode:burned` | 같은 자막을 모든 출력 해상도 영상에 렌더링. 재생 중 끌 수 없음. SRT/VTT·전사 JSON/TXT도 포함 |
+| `subtitles.language` | 기본 auto, auto/ko/en/ja/zh/yue. 기존 STT 언어 계약 |
+| `subtitles.use_itn` | 기본 true. 숫자·문장 표기 정규화 |
+
+단일 업로드·Job·공통 연산 슬롯에서 입력 검사·예약 → STT 한 번 → SRT/VTT → 썸네일 →
+해상도별 변환 → ZIP 순으로 처리하고 종료 웹훅 한 건을 생성합니다. CPU 인코더 전환 시에도
+인식은 반복하지 않습니다. 자막 렌더링은 CPU 필터, 인코딩은 기존 VideoToolbox/CPU 정책입니다.
+영상보다 늦게 시작하는 오디오는 앞부분 무음을 유지해 영상 재생 시각과 자막 시각을 맞춥니다.
+고정 기본 스타일과 로컬 폰트를 사용합니다. 사용자 필터·글꼴 경로·SRT 업로드·편집·번역·MP4
+출력은 포함하지 않습니다. 자막 시각은 VAD 기반 근사값이며 단어 정렬·화자 구분을 보장하지 않습니다.
+
+성공 manifest는 기존 `type:video_package`·HLS·썸네일·`video.zip`을 유지하고 다음 필드를
+추가합니다. `files`·`file_sizes`에 `transcript.json`, `transcript.txt`, `subtitles.srt`,
+`subtitles.vtt`를 추가하며 ZIP 안에 별도 자막 ZIP을 넣지 않습니다.
+
+```json
+{"subtitles":{"mode":"burned","language":"ko","timing":"vad_proportional",
+ "cue_count":12,"srt":"subtitles.srt","vtt":"subtitles.vtt","transcript":"transcript.json"}}
+```
+
+`GET /api/v1/jobs/{id}/result`는 계속 `video.zip`입니다. 개별 자막은 인증된
+`/api/v1/jobs/{id}/files/subtitles.srt` 또는 `/files/subtitles.vtt`에서 받습니다.
+플랫폼은 HLS·썸네일·자막·필요한 전사를 영속 반영한 뒤 receipt를 보냅니다.
+기존 generation·삭제 파일 확인·중복 제거를 유지합니다. 자막 옵션 변경은 같은 멱등 키의
+내용 변경으로 409이며 새 UUID를 사용합니다. 확장 전 접수의 재전송도 기존 ID를 유지합니다.
+
+`GET /api/v1/services`의 `video.package.subtitle_support`에서 `sidecar`·`burned` 지원과
+유효 길이·인식/전체 제한시간을 확인합니다. STT 비활성화는 503 `stt_not_configured`,
+libass 필터 미지원은 503 `subtitle_renderer_unavailable`로 업로드 전 접수를 거부합니다.
+모델 유실·인식·자막·렌더링 실패는 전체 실패이며 자막 없는 결과로 바꾸지 않습니다.
+무음 오디오는 `cue_count:0`인 빈 자막으로 성공하지만 오디오 트랙 없는 영상은 거부합니다.
+영상 1시간과 `STT_MAX_DURATION_SECONDS` 중 작은 길이 한도를 적용합니다. 인식 단계는
+`STT_TIMEOUT_SECONDS`(기본 900초), 인식·모든 해상도 변환·대기를 합친 전체는 기존 영상
+제한시간(기본 1800초) 안에 끝나야 합니다. 영상과 자막·음성 중간 파일의 공간을 함께 예약하고,
+취소·점유 만료·시간 초과에는 기존 실행 중지·정리·보존 정책을 적용합니다.
 
 완료 결과 형식 예시입니다. 실제 파일 목록과 해상도는 원본에 따라 달라집니다.
 

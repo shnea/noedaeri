@@ -88,6 +88,13 @@ function Details({
       total_bytes: z.number().optional(),
       video_encoder: z.enum(["libx264", "h264_videotoolbox"]).optional(),
       hardware_fallback: z.boolean().optional(),
+      subtitles: z
+        .object({
+          mode: z.enum(["sidecar", "burned"]),
+          language: z.string(),
+          cue_count: z.number(),
+        })
+        .optional(),
       variants: z.array(z.object({ label: z.string(), playlist: z.string() })),
     })
     .safeParse(job.result);
@@ -293,6 +300,7 @@ function Details({
               <VideoResult
                 jobId={job.id}
                 variants={videoPackage.data.variants}
+                subtitles={videoPackage.data.subtitles}
               />
             )}
             {videoPackage.success &&
@@ -457,8 +465,14 @@ function NewTask({
   const [file, setFile] = useState<File | null>(null);
   const [seconds, setSeconds] = useState(retryJob?.options?.seconds ?? 0);
 
+  const [subtitleMode, setSubtitleMode] = useState(
+    retryJob?.options?.subtitles?.mode ?? "none",
+  );
+
   const [language, setLanguage] = useState(
-    retryJob?.options?.language ?? "auto",
+    retryJob?.options?.subtitles?.language ??
+      retryJob?.options?.language ??
+      "auto",
   );
 
   const [correction, setCorrection] = useState(
@@ -469,7 +483,10 @@ function NewTask({
     retryJob?.options?.mode ?? "auto",
   );
 
-  const [useItn, setUseItn] = useState(retryJob?.options?.use_itn ?? true);
+  const [useItn, setUseItn] = useState(
+    retryJob?.options?.subtitles?.use_itn ?? retryJob?.options?.use_itn ?? true,
+  );
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [key] = useState(crypto.randomUUID());
@@ -605,7 +622,19 @@ function NewTask({
                     ? { language, language_correction: correction }
                     : ["stt.transcribe", "video.subtitles"].includes(kind)
                       ? { language, use_itn: useItn }
-                      : { seconds },
+                      : kind === "video.package"
+                        ? {
+                            seconds,
+                            subtitles:
+                              subtitleMode === "none"
+                                ? null
+                                : {
+                                    mode: subtitleMode,
+                                    language,
+                                    use_itn: useItn,
+                                  },
+                          }
+                        : { seconds },
           }),
         ),
       );
@@ -660,6 +689,7 @@ function NewTask({
               setKind(event.target.value);
               setFile(null);
               setLanguage("auto");
+              setSubtitleMode("none");
             }}
           >
             {services
@@ -886,7 +916,33 @@ function NewTask({
             </select>
           </label>
         )}
-        {["stt.transcribe", "video.subtitles"].includes(kind) && (
+        {kind === "video.package" && (
+          <label>
+            영상 자막
+            <select
+              aria-label="영상 자막"
+              disabled={submitted}
+              value={subtitleMode}
+              onChange={(event) => setSubtitleMode(event.target.value)}
+            >
+              <option value="none">자막 없이 기존 영상 처리</option>
+              <option
+                value="sidecar"
+                disabled={!service?.subtitle_support?.sidecar}
+              >
+                자막 파일 함께 생성 · SRT·VTT
+              </option>
+              <option
+                value="burned"
+                disabled={!service?.subtitle_support?.burned}
+              >
+                영상에 자막 입히기 · 끌 수 없음
+              </option>
+            </select>
+          </label>
+        )}
+        {(["stt.transcribe", "video.subtitles"].includes(kind) ||
+          (kind === "video.package" && subtitleMode !== "none")) && (
           <>
             <label>
               인식 언어
@@ -925,6 +981,20 @@ function NewTask({
           </>
         )}
       </div>
+      {kind === "video.package" && (
+        <p>
+          썸네일과 해상도별 HLS를 한 작업에서 생성합니다.
+          {subtitleMode !== "none"
+            ? ` 첫 오디오 트랙을 한 번 인식해 SRT·VTT를 함께 만듭니다. 자막 시각은 근사값이며 내용·시각을 확인해 주세요.${subtitleMode === "burned" ? " 모든 해상도 영상에 자막을 입히므로 재생 중 끌 수 없습니다." : " 영상에는 글자를 넣지 않으며 미리보기에서 자막을 켜고 끌 수 있습니다."}`
+            : " 자막을 선택하면 음성이 포함된 영상이 필요합니다."}
+          {service?.subtitle_support &&
+            subtitleMode !== "none" &&
+            ` 최대 ${service.subtitle_support.max_duration_seconds / 60}분 · 인식 제한 ${service.subtitle_support.transcription_timeout_seconds / 60}분 · 전체 처리 제한 ${service.subtitle_support.total_timeout_seconds / 60}분.`}
+          {service?.subtitle_support &&
+            !service.subtitle_support.burned &&
+            " 자막 입히기를 사용할 수 없습니다. 관리자에게 음성 인식과 자막 렌더러 설정을 확인해 주세요."}
+        </p>
+      )}
       {kind === "pdf.extract" && (
         <p>
           PDF 최대 {imageLimitMb}MB · 최대{" "}
@@ -957,7 +1027,7 @@ function NewTask({
             ` 최대 ${service.limits.max_duration_seconds / 60}분 · 처리 제한 ${service.limits.timeout_seconds / 60}분 · CPU ${service.limits.cpu_threads}스레드.`}
           결과는 텍스트와 구간별 시각이며, 입력은 작업 종료 후 정리됩니다.
           {kind === "video.subtitles" &&
-            " SRT·VTT 자막도 생성합니다. 자막 시각은 음성 구간을 나눈 근사값이며, 단어별 정렬·화자 구분·영상에 자막 입히기는 제공하지 않습니다."}
+            " SRT·VTT 자막도 생성합니다. 자막 시각은 음성 구간을 나눈 근사값입니다. 단어별 정렬·화자 구분은 제공하지 않으며, 영상에 자막을 입히려면 영상 통합 처리에서 선택해 주세요."}
         </p>
       )}
       {service?.interface === "translation" && (

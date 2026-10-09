@@ -492,6 +492,13 @@ def create_app(settings: Settings | None = None):
             options = service.options.model_validate(data.options).model_dump(mode="json")
         except ValidationError:
             raise HTTPException(422, "invalid_job_options") from None
+        if data.kind == "video.package" and options["subtitles"]:
+            from .media import subtitle_renderer_available
+
+            if not getattr(app.state, "settings", settings).stt_enabled:
+                raise HTTPException(503, "stt_not_configured")
+            if options["subtitles"]["mode"] == "burned" and not subtitle_renderer_available():
+                raise HTTPException(503, "subtitle_renderer_unavailable")
         try:
             data.input = service.input_model.model_validate(data.input).model_dump(mode="json")
         except ValidationError:
@@ -511,6 +518,10 @@ def create_app(settings: Settings | None = None):
             ).fetchone()
             if existing:
                 existing_options = existing["options"]
+                if data.kind == "video.package" and existing["kind"] == data.kind:
+                    existing_options = service.options.model_validate(existing_options).model_dump(
+                        mode="json"
+                    )
                 if data.kind == "tts.synthesize":
                     existing_options = {key: existing_options.get(key) for key in options}
                 if (
@@ -816,7 +827,9 @@ def create_app(settings: Settings | None = None):
             raise HTTPException(413, "result_too_large")
         if data.status == "succeeded":
             with db.connect() as conn:
-                job = conn.execute("SELECT kind FROM jobs WHERE id=%s", (job_id,)).fetchone()
+                job = conn.execute(
+                    "SELECT kind,options FROM jobs WHERE id=%s", (job_id,)
+                ).fetchone()
             if not job:
                 raise HTTPException(404, "job_not_found")
             service = SERVICES[job["kind"]]
@@ -852,6 +865,26 @@ def create_app(settings: Settings | None = None):
                     if job["kind"] == "ocr.recognize"
                     else {"master.m3u8", "thumbnail.jpg", "video.zip"}
                 )
+                if job["kind"] == "video.package" and job["options"].get("subtitles"):
+                    required |= {
+                        "transcript.json",
+                        "transcript.txt",
+                        "subtitles.srt",
+                        "subtitles.vtt",
+                    }
+                    subtitle = result_data.get("subtitles")
+                    if not isinstance(subtitle, dict) or any(
+                        subtitle.get(key) != value
+                        for key, value in {
+                            "mode": job["options"]["subtitles"]["mode"],
+                            "language": job["options"]["subtitles"]["language"],
+                            "timing": "vad_proportional",
+                            "srt": "subtitles.srt",
+                            "vtt": "subtitles.vtt",
+                            "transcript": "transcript.json",
+                        }.items()
+                    ):
+                        raise HTTPException(409, "result_missing")
                 if (
                     not isinstance(files, list)
                     or not all(isinstance(name, str) for name in files)

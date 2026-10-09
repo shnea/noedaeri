@@ -504,6 +504,7 @@ footer {
   flex-direction: column;
   gap: 9px;
   font-size: 14px;
+  min-width: 0;
 }
 .form-fields input[type="file"] {
   padding: 8px;

@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .media import subtitle_renderer_available
 from .ocr import runtime_ready
 
 
@@ -55,6 +56,14 @@ class TranscriptionOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     language: Literal["auto", "ko", "en", "ja", "zh", "yue"] = "auto"
     use_itn: bool = True
+
+
+class VideoSubtitleOptions(TranscriptionOptions):
+    mode: Literal["sidecar", "burned"] = "sidecar"
+
+
+class VideoPackageOptions(ThumbnailOptions):
+    subtitles: VideoSubtitleOptions | None = None
 
 
 class SpeechInput(BaseModel):
@@ -159,7 +168,7 @@ SERVICES = {
         "ffmpeg",
         "영상 통합 처리 · 썸네일 + 해상도별 스트리밍",
         "upload",
-        ThumbnailOptions,
+        VideoPackageOptions,
     ),
     "video.thumbnail": Service(
         "video.thumbnail",
@@ -212,6 +221,16 @@ def service_catalog(settings):
                 "processing_dimension": 4096,
             }
             if item.service == "pdf"
+            else None,
+            "subtitle_support": {
+                "sidecar": settings.stt_enabled,
+                "burned": settings.stt_enabled and subtitle_renderer_available(),
+                "max_duration_seconds": min(3600, settings.stt_max_duration),
+                "transcription_timeout_seconds": settings.stt_timeout,
+                "total_timeout_seconds": settings.video_timeout,
+                "timing": "vad_proportional",
+            }
+            if item.kind == "video.package"
             else None,
             "image_limits": {
                 "max_input_bytes": min(settings.upload_limit, settings.image_input_limit),

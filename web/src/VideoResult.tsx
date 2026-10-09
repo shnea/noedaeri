@@ -4,9 +4,15 @@ import { useEffect, useRef, useState } from "react";
 export function VideoResult({
   jobId,
   variants,
+  subtitles,
 }: {
   jobId: string;
   variants: { label: string; playlist: string }[];
+  subtitles?: {
+    mode: "sidecar" | "burned";
+    language: string;
+    cue_count: number;
+  };
 }) {
   const video = useRef<HTMLVideoElement>(null);
   const controller = useRef<Hls | null>(null);
@@ -91,7 +97,39 @@ export function VideoResult({
           )
         }
         style={{ width: "100%", maxHeight: "320px" }}
-      />
+      >
+        {subtitles?.mode === "sidecar" && (
+          <track
+            kind="subtitles"
+            src={base + "subtitles.vtt"}
+            srcLang={
+              subtitles.language === "auto" ? undefined : subtitles.language
+            }
+            label="자동 생성 자막"
+            default
+          />
+        )}
+      </video>
+      {subtitles && (
+        <>
+          <p>
+            {subtitles.mode === "burned"
+              ? "영상에 자막을 입혔습니다. 모든 화질에 적용되며 재생 중 끌 수 없습니다."
+              : "자동 생성 자막입니다. 재생기의 자막 메뉴에서 켜고 끌 수 있습니다."}
+            {` ${subtitles.cue_count}개 자막 · 시각은 근사값입니다.`}
+            {subtitles.cue_count === 0 &&
+              " 인식된 음성이 없어 표시할 자막이 없습니다."}
+          </p>
+          <div className="guide-actions">
+            <a className="button" href={base + "subtitles.srt"} download>
+              SRT 자막
+            </a>
+            <a className="button" href={base + "subtitles.vtt"} download>
+              VTT 자막
+            </a>
+          </div>
+        </>
+      )}
       <label>
         재생 화질{" "}
         <select
