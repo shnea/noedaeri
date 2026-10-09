@@ -126,7 +126,7 @@ def test_translation_execution_usage_result_validation_and_expiry(app, monkeypat
 
     from conftest import login
 
-    from noedaeri.ai_jobs import cleanup_translation_results
+    from noedaeri.ai_jobs import cleanup_ai_results
     from noedaeri.compute import compute_context
 
     client, _ = login(app)
@@ -182,7 +182,7 @@ def test_translation_execution_usage_result_validation_and_expiry(app, monkeypat
         )
     assert client.get(f"/api/ai/jobs/{job['id']}").json()["result"] is None
     assert client.get(f"/api/ai/jobs/{job['id']}/translation.txt").status_code == 410
-    cleanup_translation_results(app.state.db)
+    cleanup_ai_results(app.state.db)
     with app.state.db.connect() as conn:
         row = conn.execute(
             "SELECT prompt,input,result FROM ai_jobs WHERE id=%s", (job["id"],)

@@ -98,6 +98,17 @@ CREATE TABLE IF NOT EXISTS ai_jobs (
 CREATE INDEX IF NOT EXISTS ai_jobs_owner_created ON ai_jobs(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ai_jobs_request ON ai_jobs(project, environment, request_id);
 
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS notify boolean NOT NULL DEFAULT false;
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS terminal_event_id uuid NOT NULL DEFAULT gen_random_uuid();
+ALTER TABLE ai_jobs ADD COLUMN IF NOT EXISTS received_at timestamptz;
+CREATE TABLE IF NOT EXISTS ai_deliveries (
+ id uuid PRIMARY KEY, job_id uuid NOT NULL UNIQUE REFERENCES ai_jobs(id), body text NOT NULL,
+ state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','delivered','failed','acknowledged')),
+ attempts integer NOT NULL DEFAULT 0, last_http_status integer,
+ last_attempt_at timestamptz, next_attempt_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ai_deliveries_pending ON ai_deliveries(next_attempt_at) WHERE state='pending';
+
 CREATE TABLE IF NOT EXISTS operation_jobs (
  id uuid PRIMARY KEY,
  owner_id uuid NOT NULL REFERENCES users(id),

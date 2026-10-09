@@ -120,7 +120,7 @@ def cleanup_operation_results(db):
         )
 
 
-def list_tasks(db, user, present_media, limit, offset, status=None, service=None):
+def list_tasks(db, user, present_media, limit, offset, status=None, service=None, settings=None):
     # Bound and order the combined set before reading potentially large result payloads.
     sources = (
         (
@@ -177,9 +177,11 @@ def list_tasks(db, user, present_media, limit, offset, status=None, service=None
                 label = SERVICES[kind].label if kind in SERVICES else kind
                 executor = str(job["worker_id"])[:8] if job["worker_id"] else "배정 대기"
             elif row["source"] == "ai":
+                from .ai_delivery import present_ai_delivery
                 from .ai_jobs import _serialize_job
 
                 data = _serialize_job(job)
+                data["delivery"] = present_ai_delivery(conn, job, settings)
                 if job["expires_at"] and job["expires_at"] <= datetime.now(UTC):
                     data["result"] = None
                 title = AI_TASK_TYPES.get(job["task_type"], job["task_type"])

@@ -14,6 +14,7 @@ class TranslationOptions(BaseModel):
 
 
 class TranslationRequest(TranslationOptions):
+    notify: bool = False
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     request_id: str = Field(min_length=1, max_length=128)
     text: str = Field(min_length=1, max_length=4000, pattern=r"^[^\x00-\x08\x0b\x0c\x0e-\x1f]+$")

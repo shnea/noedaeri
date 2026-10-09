@@ -33,11 +33,20 @@ def verify_webhook(body: bytes, headers, secret: str, now=None):
         "job.succeeded",
         "job.failed",
         "job.cancelled",
+        "ai.job.succeeded",
+        "ai.job.failed",
+        "ai.job.cancelled",
     }:
         raise ValueError("Unsupported webhook")
     if str(UUID(event["event_id"])) != headers.get("x-noedaeri-event-id"):
         raise ValueError("Event ID mismatch")
     UUID(event["job_id"])
+    if event["type"].startswith("ai."):
+        if event.get("source") != "ai" or not all(
+            isinstance(event.get(key), str) and 1 <= len(event[key]) <= 128
+            for key in ("request_id", "project", "environment")
+        ):
+            raise ValueError("Invalid AI event scope")
     return event
 
 
@@ -56,17 +65,73 @@ class PlatformClient:
     def close(self):
         self.client.close()
 
-    def create(self, *, kind, title, request_id, extension=None, seconds=0, retry_of=None):
+    def create(
+        self,
+        *,
+        kind,
+        title,
+        request_id,
+        extension=None,
+        seconds=0,
+        retry_of=None,
+        options=None,
+        input_data=None,
+    ):
         # Save request_id with the platform file/generation before this request.
         payload = {
             "kind": kind,
             "title": title,
             "idempotency_key": str(UUID(str(request_id))),
-            "input": {"type": "upload", **({"extension": extension} if extension else {})},
-            "options": {} if kind == "image.package" else {"seconds": seconds},
+            "input": input_data
+            if input_data is not None
+            else {"type": "upload", **({"extension": extension} if extension else {})},
+            "options": options
+            if options is not None
+            else ({"seconds": seconds} if kind == "video.thumbnail" else {}),
             "retry_of": str(UUID(str(retry_of))) if retry_of else None,
         }
         response = self.client.post("/api/v1/jobs", json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def translate(
+        self,
+        *,
+        request_id,
+        text,
+        target_language,
+        project,
+        environment,
+        source_language="auto",
+        notify=True,
+    ):
+        # Host assigns trusted project/environment and persists its request ID first.
+        response = self.client.post(
+            "/api/v1/translations",
+            json={
+                "request_id": request_id,
+                "text": text,
+                "source_language": source_language,
+                "target_language": target_language,
+                "project": project,
+                "environment": environment,
+                "notify": notify,
+            },
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def ai_job(self, job_id):
+        response = self.client.get(f"/api/v1/ai/jobs/{UUID(str(job_id))}")
+        response.raise_for_status()
+        return response.json()
+
+    def ai_receipt(self, job_id, event_id):
+        # ONLY after durable result registration; not upon webhook acceptance.
+        response = self.client.post(
+            f"/api/v1/ai/jobs/{UUID(str(job_id))}/receipt",
+            json={"event_id": str(UUID(str(event_id)))},
+        )
         response.raise_for_status()
         return response.json()
 

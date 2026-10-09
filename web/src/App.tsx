@@ -1108,12 +1108,12 @@ export default function App() {
     }
   }
 
-  async function redeliver(job: Job) {
+  async function redeliver(job: { id: string }, source = "media") {
     if (!user) return;
 
     try {
       await request(
-        `/api/admin/jobs/${job.id}/webhook-retry`,
+        `${source === "ai" ? "/api/admin/ai/jobs" : "/api/admin/jobs"}/${job.id}/webhook-retry`,
         mutation(user.csrf),
       );
       await refresh();
@@ -1519,6 +1519,10 @@ export default function App() {
                                     <TaskDetails
                                       task={job}
                                       currentUserId={user.id}
+                                      isAdmin={user.role === "admin"}
+                                      retryDelivery={() =>
+                                        void redeliver(job, "ai")
+                                      }
                                       cancel={() => void cancel(job)}
                                     />
                                   )}

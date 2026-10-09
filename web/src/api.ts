@@ -142,6 +142,19 @@ export const workerSchema = z.object({
 });
 
 export const aiJobSchema = z.object({
+  notify: z.boolean().optional(),
+  received_at: z.string().nullable().optional(),
+  terminal_event_id: z.string().nullable().optional(),
+  delivery: z
+    .object({
+      state: z.string(),
+      configured: z.boolean(),
+      attempts: z.number(),
+      last_http_status: z.number().nullable(),
+      next_attempt_at: z.string().nullable(),
+    })
+    .nullable()
+    .optional(),
   id: z.string(),
   request_id: z.string(),
   task_type: z.string(),

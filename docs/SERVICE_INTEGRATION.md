@@ -1,6 +1,50 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 25 · 기준일: 2026-10-10
+문서 버전: 26 · 기준일: 2026-10-10
+
+## 플랫폼 연결 자료 · AI 완료 알림
+
+[플랫폼 인계 문서](/integrations/PLATFORM_HANDOFF.md), [Python 서버 클라이언트](/examples/platform-client.py),
+[현재 OpenAPI](/integrations/openapi.json)를 함께 사용한다. 이 자료는 인증 없는 GET이며
+실제 연산에는 전용 요청 키가 필요하다. 실제 환경값은 암호화 설정에만 저장한다.
+
+AI Job과 번역은 `notify` 기본 false로 기존 동기·테스트 계약을 유지한다. 플랫폼에서 완료를
+반복 조회하지 않을 때 `notify:true`와 `sync:false`를 선택한다. 전용 번역 경로는 항상 비동기다.
+웹 사용자에게 notify:true는 422 `ai_notifications_platform_only`, AI 수신 주소나 서명 비밀이
+없으면 503 `ai_delivery_not_configured`이며 접수하지 않는다. notify 변경도 같은 요청 ID의
+내용 변경으로 판단해 409다. 기존 저장된 작업은 자동 알림 대상으로 전환하지 않는다.
+`/services`의 `completion_webhook_available`로 연결 준비 여부를 확인한다.
+
+| 항목 | 계약 |
+|---|---|
+| 수신 주소 | 서버 설정 `NOEDAERI_PLATFORM_AI_WEBHOOK_URL`, 고정 HTTPS·쿼리/사용자 정보/fragment 없음. 기존 파일 수신 URL과 별도. `NOEDAERI_PLATFORM_WEBHOOK_SECRET` 서명 비밀 공유 |
+| 이벤트 | version 1, source ai, type ai.job.succeeded / ai.job.failed / ai.job.cancelled. event_id·job_id UUID, request_id·project·environment·occurred_at·job.task_type/status/error_code/expires_at |
+| 본문 제외 | prompt·input·번역문·모델 결과·토큰·접속 비밀을 이벤트에 넣지 않음. 업무 내용·개인정보를 request_id나 범위 문자열에 넣지 않음 |
+| 서명 | 기존 X-Noedaeri-Event-ID / X-Noedaeri-Timestamp / X-Noedaeri-Signature. HMAC-SHA256(timestamp + 점 + 원문 body), sha256= 접두사. 수신기는 5분 허용치·원문 서명·헤더/본문 ID·업무 범위를 검증 |
+| 내구성·중복 | 종료 상태에서 DB outbox 한 건 생성. 재시작 후 누락 수집. 같은 이벤트 ID·동일 본문 재전송, 시각/서명은 매번 새로 생성. inbox에 event_id·본문 해시 영속 중복 제거 후 2xx |
+| 전송 제한 | 전송당 5초, redirect 미허용, 실패 시 30초부터 지수 대기·최대 간격 1시간, 최대 8회. 실패 상태는 관리자 웹에서 재전송. 작업 취소·실패도 알림 |
+| 결과 | 성공 event.result_path는 `/api/v1/ai/jobs/{id}`. 그 JSON의 result를 읽음. 번역 TXT는 별도 `/translation.txt`. 수신 시 결과 한 번 조회하며 실패한 다운로드만 제한 재시도 |
+| 수령 확인 | 성공 후 `/api/v1/ai/jobs/{id}/receipt`에 `{ "event_id":"<UUID>" }`. 저장·업무 반영을 영속 완료한 뒤 전송. 같은 확인은 멱등. 틀린 ID/상태 409, 만료 410. 수령 즉시 결과 차단·정기 원문/결과 정리 |
+| 운영 조회 | AI Job 응답 terminal_event_id·notify·received_at·delivery(state/configured/attempts/last_http_status/next_attempt_at). 공통 작업 상세에 전송·수령 상태. 관리자 `/api/admin/ai/jobs/{id}/webhook-retry`는 failed만 재예약 |
+| 실제 연결 상태 | 뇌대리·모의 수신기 검수. 플랫폼 AI 수신 URL 미설정·플랫폼 어댑터/권한 반영 대기. 실제 플랫폼 완료 저장 성공으로 해석하지 않음 |
+
+성공 이벤트 예시(모든 값은 예시):
+
+```json
+{"version":1,"source":"ai","event_id":"00000000-0000-4000-8000-000000000001",
+ "type":"ai.job.succeeded","job_id":"00000000-0000-4000-8000-000000000002",
+ "request_id":"sample-request","project":"sample-project","environment":"test",
+ "occurred_at":"2026-10-10T00:00:00+00:00",
+ "job":{"task_type":"text.translate","status":"succeeded","error_code":null,
+ "expires_at":"2026-10-17T00:00:00+00:00"},
+ "job_path":"/api/v1/ai/jobs/00000000-0000-4000-8000-000000000002",
+ "result_path":"/api/v1/ai/jobs/00000000-0000-4000-8000-000000000002",
+ "receipt_path":"/api/v1/ai/jobs/00000000-0000-4000-8000-000000000002/receipt"}
+```
+
+파일은 기존 `job.*`·`/jobs/{id}/receipt`, AI는 `ai.job.*`·`/ai/jobs/{id}/receipt`다.
+실패·취소 이벤트에는 결과/receipt 경로가 없다. 전송 성공 2xx와 저장 완료 확인을 구분한다.
+원본 업무 삭제·세대 변경·권한 철회 시 늦은 결과를 반영하지 않는 책임은 플랫폼에 있다.
 
 ## 문장 번역 · n8n
 
@@ -19,11 +63,11 @@
 | 제어·사용량 | 기존 `/ai/jobs/{id}/cancel`, `/ai/usage?task_type=text.translate`. `/tasks?service=translation`로 통합 이력 조회 |
 | 보존 | 웹 완료 후 24시간, 플랫폼 기본 7일. 만료 즉시 결과 접근 차단·정기 정리에서 원문/prompt·input·번역문 제거, 작업 메타데이터·사용량 유지 |
 | 오류 | 미연결 503 translation_not_configured. n8n HTTP·통신·시간 초과는 기존 AI 오류. 잘못된/빈 번역문 502 translation_invalid_result. 결과를 성공으로 표시하지 않음 |
-| 완료 알림 상태 | 이 단계는 기존 AI Job 접수·조회 계약이다. 파일 Job의 웹훅/receipt가 AI Job에도 적용된다고 가정하지 않는다. 플랫폼의 완료 수신·결과 반영 경로는 다음 플랫폼 연결 단계에서 구현·검수 |
+| 완료 알림 | 플랫폼은 `notify:true`로 앞의 AI 완료 알림을 선택. 별도 AI 수신 URL 미설정 시 503. 파일 Job과 다른 `ai.job.*` 이벤트·AI receipt 경로 사용. 실제 플랫폼 수신·반영은 플랫폼에서 후속 검수 |
 
 ```json
 {"request_id":"<새 업무 ID>","text":"번역할 문장","source_language":"ko",
- "target_language":"en","project":"<논리 프로젝트>","environment":"<환경>"}
+ "target_language":"en","project":"<논리 프로젝트>","environment":"<환경>","notify":true}
 ```
 
 기존 `POST /api/v1/ai/jobs`에도 `task_type:"text.translate"`, `prompt`에 원문,
@@ -241,7 +285,7 @@ Apple API 근거: [문자 인식 요청](https://developer.apple.com/documentati
 | n8n 내부 HTTP 단계 | 아래 실행 권한 전달은 뇌대리·n8n이 담당. 플랫폼이 자식 토큰을 발급하거나 사용하지 않음 |
 | 완료된 워크플로의 실패 | n8n이 HTTP 200이라도 본문 `status`가 `failed`·`error`·`cancelled`면 뇌대리는 HTTP 424 `n8n_workflow_failed`, 작업 이력은 `failed`·결과 없음. 같은 요청 ID로 재실행하지 않음 |
 | 연산 종료가 불확실한 실패 | 통신 실패·타임아웃만으로 종료를 판단하지 않음. 운영자 종료 확인 전 자동 새 요청 금지 |
-| AI 결과 수령 | 현재 AI JSON 작업에는 파일 완료 웹훅·receipt가 없음. 파일/TTS 결과 수령 계약과 구분 |
+| AI 결과 수령 | `notify:true` 선택 시 별도 AI 서명 웹훅·수령 확인. 플랫폼 AI 수신 URL 설정 필요. 파일/TTS와 타입·경로 구분 |
 | 플랫폼 키 권한 | 실제 선택 기능에 필요한 `ai:read`, `ai:execute`, `ai:jobs:read` 등만 발급. 뇌대리 요청 키·n8n 관리 키와 구분 |
 
 ## 공통 연산 자원 배정 · 2026-10-09
@@ -347,7 +391,7 @@ Raya·임베딩·벡터 검색 HTTP 노드의 `X-Noedaeri-Compute-Token` 헤더�
 | 목소리 등록·관리 | `/api/v1/voices` | 기본 목소리·참조 음성 등록, 조회·이름 수정·삭제, 요청자 범위 확인 |
 | 음성 생성 | `tts.synthesize` | Qwen3-TTS 1.7B 8bit, Job 큐·WAV·서명 완료 알림·웹 테스트 |
 | PDF 텍스트 추출 | `pdf.extract` | PDFKit 내장 텍스트·페이지별 Vision OCR·TXT/JSON/ZIP·Job·완료 알림·웹 테스트 |
-| 문장 번역 | `text.translate` | n8n 전용 지침·AI Job·번역문/TXT·사용량·웹 테스트. 플랫폼 완료 수신은 별도 연결 |
+| 문장 번역 | `text.translate` | n8n 전용 지침·AI Job·번역문/TXT·사용량·웹 테스트·선택형 AI 완료 알림. 플랫폼 수신기는 별도 연결 |
 | 영상 자막 | `video.subtitles` | STT 재사용·근사 구간 SRT/VTT·TXT/JSON/ZIP·Job·완료 알림·웹 테스트 |
 | 음성 인식 | `stt.transcribe` | SenseVoice INT8·Silero VAD·텍스트/구간 JSON/ZIP·Job·서명 완료 알림·웹 테스트 |
 | 이미지 통합 처리 | `image.package` | JPEG 썸네일·WebP 미리보기·ZIP 생성 가능 |
@@ -355,7 +399,7 @@ Raya·임베딩·벡터 검색 HTTP 노드의 `X-Noedaeri-Compute-Token` 헤더�
 | 통합 영상 처리 | `video.package` | 썸네일·해상도별 HLS·ZIP 생성 가능 |
 | 플랫폼 서버 인증·요청 | `/api/v1/` | 전용 키 인증 구현, 수신 주소 설정 후 접수 |
 | 결과 수령·저장 확인 | `receipt` | API 구현. 플랫폼 파일 등록 어댑터는 플랫폼에서 구현 |
-| 공통 AI 작업 실행 | `/api/v1/ai/jobs` | 플랫폼 키 인증, 동기/비동기 n8n 연동 실행, 8대 작업·공통 RAG, `request_id` 멱등성 및 24시간 보존 구현 완료 |
+| 공통 AI 작업 실행 | `/api/v1/ai/jobs` | 플랫폼 키 인증, 동기/비동기 n8n 연동 실행, 등록 작업·공통 RAG, 멱등 접수·웹 24시간/플랫폼 기본 7일 보존·선택형 완료 알림 |
 | 공통 텍스트 임베딩 | `/api/v1/ai/embeddings` | 플랫폼 키·AI 키·웹 세션 인증, 단일/배치 고성능 임베딩(768차원 등) 동기 API 구현 완료 |
 | 공통 문서 벡터 인덱싱 | `/api/v1/ai/indexing` | 플랫폼 키·웹 세션 인증, 문서 추가(upsert)·전체 교체(replace_all)·삭제(delete), 소유자별 실제 색인·비동기 접수·멱등성·결과 만료·관리 화면 구현 |
 | 공통 벡터 유사도 검색 | `/api/v1/ai/indexing/search` | 플랫폼 키·웹 세션 인증, 소유자·프로젝트·환경·컬렉션별 768차원 코사인 검색 구현 |
@@ -551,7 +595,7 @@ n8n 후속 흐름에 넘긴다. 단순 합성에 n8n을 경유하도록 강제�
 
 외부 서비스의 AI·n8n 요청은 **외부 서비스 → 플랫폼 → 뇌대리 → n8n** 순서로 연결한다. 플랫폼은 파일서비스 연동과 동일한 `NOEDAERI_PLATFORM_API_KEY`를 `X-Noedaeri-API-Key` 헤더로 전달한다. 개별 앱에 뇌대리 키나 n8n 관리 키를 배포하지 않는다. 웹 관리·검수는 기존 플랫폼 로그인·승인 세션을 사용한다.
 
-현재 플랫폼에서 호출할 수 있는 공통 AI 작업 실행 API는 `POST /api/v1/ai/jobs`다. 요청 시 요청 ID(`request_id`), 작업 종류(`task_type`), 프로젝트(`project`), 환경(`environment`)을 전달하며, 뇌대리가 중복 실행 방지, n8n 라우팅, 실행 상태 추적, 모델별 토큰 사용량(`ai_usage`) 기록 및 24시간 결과 보존을 관리한다. n8n에는 검증된 작업만 실행용 웹훅으로 전달하며 n8n 관리 API 키를 외부 요청 인증에 재사용하지 않는다.
+현재 플랫폼에서 호출할 수 있는 공통 AI 작업 실행 API는 `POST /api/v1/ai/jobs`다. 요청 시 요청 ID(`request_id`), 작업 종류(`task_type`), 프로젝트(`project`), 환경(`environment`)을 전달하며, 뇌대리가 중복 실행 방지, n8n 라우팅, 실행 상태 추적, 모델별 토큰 사용량(`ai_usage`) 기록 및 웹 24시간/플랫폼 기본 7일 결과 보존을 관리한다. n8n에는 검증된 작업만 실행용 웹훅으로 전달하며 n8n 관리 API 키를 외부 요청 인증에 재사용하지 않는다.
 
 [가져오기용 워크플로 JSON](https://github.com/shnea/noedaeri/blob/main/examples/n8n_ai_routing_sample.json)을 제공한다. 수동 실행 → 가상 요청 → 작업 종류 분기 → 빈 지침 → 실제 Raya 추론 → 성능 등급 분기 순서다. 각 분기의 `instruction`을 비워 두었다. 각 모델 분기에는 n8n의 LangChain Agent와 전용 Chat Model 노드가 연결되어 직접 모델을 호출한다.
 
@@ -626,25 +670,28 @@ Raya에는 현재 사용자 요청과 필요한 텍스트 문맥을 전달하고
 
 ### 공통 AI 작업 실행 API
 
-플랫폼은 `POST /api/v1/ai/jobs`를 호출하여 8대 AI 작업 및 RAG 질의응답을 실행한다.
+플랫폼은 `POST /api/v1/ai/jobs`를 호출하여 등록한 AI 작업 및 RAG 질의응답을 실행한다.
 
 | 엔드포인트 | 메서드 | 인증 | 설명 |
 |---|---|---|---|
 | `/api/v1/ai/jobs` | POST | 플랫폼 키 (`X-Noedaeri-API-Key`) | AI 작업 실행 (동기/비동기, 멱등성 보장) |
-| `/api/v1/ai/jobs/{job_id}` | GET | 플랫폼 키 / 세션 | 작업 상태 및 결과 조회 |
-| `/api/v1/ai/jobs` | GET | 플랫폼 키 / 세션 | 작업 목록 조회 (`project`, `environment`, `status` 필터) |
-| `/api/v1/ai/jobs/{job_id}/cancel` | POST | 플랫폼 키 / 세션 | 실행 중인 작업 취소 |
-| `/api/v1/ai/usage` | GET | 플랫폼 키 / 관리자 세션 | 모델·공급자·작업별 토큰 사용량 집계 및 상세 기록 조회 |
+| `/api/v1/ai/jobs/{job_id}` | GET | 플랫폼 전용 키 | 작업 상태 및 결과 조회 |
+| `/api/v1/ai/jobs` | GET | 플랫폼 전용 키 | 작업 목록 조회 (`project`, `environment`, `status` 필터) |
+| `/api/v1/ai/jobs/{job_id}/cancel` | POST | 플랫폼 전용 키 | 대기·실행 중인 작업 취소 |
+| `/api/v1/ai/usage` | GET | 플랫폼 전용 키 | 플랫폼 소유의 모델·공급자·작업별 사용량 조회 |
 | `/internal/ai/usage` | POST | 워커 키 / Raya 키 | n8n 및 내부 워커의 사용량 보고 (중복 보고 무시) |
 
 #### 요청 필드 (`POST /api/v1/ai/jobs`)
 - `request_id` (string, 필수): 요청 고유 ID (최대 128자). `(owner_id, project, environment, request_id)` 조합으로 중복 실행을 엄격히 방지한다. 이미 완료된 요청이 재인입되면 모델을 다시 호출하지 않고 기존 결과를 반환한다 (`reused: true`).
-- `task_type` (string, 필수): 작업 종류 (`blog.tags`, `blog.summary`, `portfolio.search`, `ui.render`, `comment.generate`, `document.analyze`, `code.analyze`, `chat.general`).
-- `prompt` (string, 필수): 사용자 질문 또는 원문 프롬프트 (최대 200,000자).
+- `task_type` (string, 필수): 작업 종류 (`blog.tags`, `blog.summary`, `article.draft`, `portfolio.search`, `ui.render`, `comment.generate`, `document.analyze`, `code.analyze`, `chat.general`, `text.translate`).
+- `prompt` (string, 필수): 사용자 질문 또는 원문 프롬프트 (일반 최대 200,000자, text.translate는 4,000자).
 - `project` (string, 선택, 기본: `"default"`): 프로젝트 식별자 (`portfolio`, `blog`, `uibuilder` 등).
 - `environment` (string, 선택, 기본: `"production"`): 환경 식별자 (`production`, `staging`, `development`).
-- `input` (object, 선택): 부가 옵션 (RAG 컬렉션 지정 `collection` 등).
+- `input` (object, 선택): 부가 옵션 (RAG 컬렉션 지정 `collection` 등). 번역은 source_language/target_language만 허용한다.
+- `notify` (boolean, 기본 false): 플랫폼 AI 완료 알림 선택. 위 별도 AI 수신 URL 설정과 수령 확인 계약을 따른다.
 - `sync` (boolean, 선택, 기본: `true`): `true`인 경우 자원 배정과 n8n 실행 결과를 기다린다. `false`인 경우 HTTP 200으로 DB 접수 상태(`pending`)를 반환하며 서버 디스패처가 실행한다. 중복 요청은 현재 상태를 반환할 수 있다. 실패·취소된 요청은 같은 ID로 다시 실행하지 않는다.
+
+`/api/v1/`는 전용 서버 키만 허용한다. 웹 세션은 대응하는 `/api/ai/` 경로를 사용하며 자신의 작업만 접근한다. 웹 관리자는 웹 경로에서 운영 범위 조회를 할 수 있다.
 
 #### 응답 예시 (HTTP 200)
 ```json
@@ -677,7 +724,7 @@ Raya에는 현재 사용자 요청과 필요한 텍스트 문맥을 전달하고
 ```
 
 #### 보존 및 정리 정책
-- AI 작업 결과는 생성 완료 시각부터 **24시간**(`expires_at`) 보관되며 이후 자동 정리 대상이 된다.
+- AI 결과는 웹 완료 후 **24시간**, 플랫폼은 설정된 기간(기본 **7일**) 보관한다. 만료 즉시 접근을 차단하고 정기 정리에서 prompt·input·result를 비운다. notify:true의 수령 확인 시 보관을 즉시 종료한다.
 - 작업 이력 및 사용량 집계는 결과 만료 후에도 보존된다.
 
 ### 공통 AI 사용량(usage) 관리

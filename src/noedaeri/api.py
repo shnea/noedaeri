@@ -20,7 +20,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .ai_indexing import cleanup_indexing_results, install_indexing_routes, process_indexing_queue
-from .ai_jobs import cleanup_translation_results, install_ai_job_routes, process_ai_queue
+from .ai_jobs import cleanup_ai_results, install_ai_job_routes, process_ai_queue
 from .auth import COOKIE, Auth, digest
 from .compute import Compute
 from .config import Settings
@@ -137,6 +137,7 @@ def create_app(settings: Settings | None = None):
     queue = Queue(db, settings.lease_seconds, settings.result_ttl, settings.platform_result_ttl)
     auth = Auth(settings, db)
     webhooks = Webhooks(db, settings)
+    ai_webhooks = Webhooks(db, settings, table="ai_deliveries", url=settings.ai_webhook_url)
     raya = Raya(settings)
 
     async def release_raya():
@@ -149,8 +150,11 @@ def create_app(settings: Settings | None = None):
             await asyncio.sleep(5)
             try:
                 await asyncio.to_thread(webhooks.collect)
+                await asyncio.to_thread(ai_webhooks.collect)
                 for _ in range(20):
-                    if not await asyncio.to_thread(webhooks.dispatch_one):
+                    sent_file = await asyncio.to_thread(webhooks.dispatch_one)
+                    sent_ai = await asyncio.to_thread(ai_webhooks.dispatch_one)
+                    if not sent_file and not sent_ai:
                         break
             except Exception:
                 import logging
@@ -181,10 +185,11 @@ def create_app(settings: Settings | None = None):
         while True:
             try:
                 await asyncio.to_thread(webhooks.collect)
+                await asyncio.to_thread(ai_webhooks.collect)
                 await asyncio.to_thread(storage.cleanup, db)
                 await asyncio.to_thread(cleanup_indexing_results, db)
                 await asyncio.to_thread(cleanup_operation_results, db)
-                await asyncio.to_thread(cleanup_translation_results, db)
+                await asyncio.to_thread(cleanup_ai_results, db)
             except Exception:
                 # Never emit connection strings, stored payloads or credentials to logs.
                 import logging
@@ -248,6 +253,7 @@ def create_app(settings: Settings | None = None):
     )
     app.state.db, app.state.queue, app.state.storage = db, queue, storage
     app.state.webhooks = webhooks
+    app.state.ai_webhooks = ai_webhooks
     app.state.raya = raya
     app.state.compute = Compute(db, settings.storage_root)
     voices = Voices(db, settings, storage)
@@ -370,7 +376,16 @@ def create_app(settings: Settings | None = None):
         status: str | None = None,
         service: str | None = None,
     ):
-        return list_tasks(db, principal(request), present, limit, offset, status, service)
+        return list_tasks(
+            db,
+            principal(request),
+            present,
+            limit,
+            offset,
+            status,
+            service,
+            getattr(app.state, "settings", settings),
+        )
 
     @app.get("/api/compute")
     def compute_status(request: Request):
@@ -410,6 +425,22 @@ def create_app(settings: Settings | None = None):
         }
         schema["security"] = [{"PlatformKey": []}]
         return schema
+
+    @app.get("/integrations/PLATFORM_HANDOFF.md")
+    def platform_handoff():
+        return FileResponse(
+            Path(__file__).resolve().parents[2] / "docs" / "PLATFORM_HANDOFF.md",
+            media_type="text/markdown",
+            filename="PLATFORM_HANDOFF.md",
+        )
+
+    @app.get("/examples/platform-client.py")
+    def platform_example():
+        return FileResponse(
+            Path(__file__).resolve().parents[2] / "examples" / "platform_client.py",
+            media_type="text/x-python",
+            filename="platform_client.py",
+        )
 
     @app.get("/api/v1/jobs")
     @app.get("/api/jobs")

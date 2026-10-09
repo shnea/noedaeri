@@ -1,7 +1,7 @@
 import asyncio
 import json
 import secrets
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, Response
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .ai_delivery import ai_result_available, collect_ai_events, present_ai_delivery
 from .auth import Auth
 from .compute import Compute, compute_context, guard_key
 from .config import Settings
@@ -27,6 +28,7 @@ class AiJobCreate(BaseModel):
     environment: str = Field(default="production", min_length=1, max_length=128)
     input: dict[str, Any] = Field(default_factory=dict)
     sync: bool = True
+    notify: bool = False
 
     @model_validator(mode="after")
     def validate_translation(self):
@@ -68,6 +70,9 @@ PUBLIC_AI_JOB_FIELDS = (
     "updated_at",
     "finished_at",
     "expires_at",
+    "notify",
+    "terminal_event_id",
+    "received_at",
 )
 
 
@@ -75,7 +80,7 @@ def _serialize_job(job: dict) -> dict:
     serialized = {}
     for key in PUBLIC_AI_JOB_FIELDS:
         val = job.get(key)
-        if key == "result" and job.get("expires_at") and job["expires_at"] <= datetime.now(UTC):
+        if key == "result" and not ai_result_available(job):
             val = None
         if isinstance(val, UUID):
             serialized[key] = str(val)
@@ -84,6 +89,12 @@ def _serialize_job(job: dict) -> dict:
         else:
             serialized[key] = val
     return serialized
+
+
+def present_ai_job(db, settings, job):
+    with db.connect() as conn:
+        delivery = present_ai_delivery(conn, job, settings)
+    return dict(_serialize_job(job), delivery=delivery)
 
 
 async def run_n8n_workflow(settings: Settings, data: AiJobCreate) -> dict:
@@ -174,6 +185,11 @@ def record_usage(
 async def execute_or_reuse_ai_job(
     db: Database, settings: Settings, owner_id: UUID, data: AiJobCreate
 ) -> dict:
+    if data.notify:
+        if owner_id != PLATFORM_OWNER:
+            raise HTTPException(422, "ai_notifications_platform_only")
+        if not settings.ai_webhook_url or not settings.webhook_secret:
+            raise HTTPException(503, "ai_delivery_not_configured")
     if data.task_type == "text.translate" and (
         not settings.n8n_ai_webhook_url or not settings.n8n_compute_context_ready
     ):
@@ -181,7 +197,7 @@ async def execute_or_reuse_ai_job(
     with db.connect() as conn:
         job = conn.execute(
             "INSERT INTO ai_jobs(id,owner_id,project,environment,request_id,task_type,prompt,input,"
-            "status) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending') "
+            "status,notify) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s) "
             "ON CONFLICT(owner_id,project,environment,request_id) DO NOTHING RETURNING *",
             (
                 uuid4(),
@@ -192,6 +208,7 @@ async def execute_or_reuse_ai_job(
                 data.task_type,
                 data.prompt,
                 Jsonb(data.input),
+                data.notify,
             ),
         ).fetchone()
         reused = job is None
@@ -201,10 +218,11 @@ async def execute_or_reuse_ai_job(
                 "AND request_id=%s",
                 (owner_id, data.project, data.environment, data.request_id),
             ).fetchone()
-            if (job["task_type"], job["prompt"], job["input"]) != (
+            if (job["task_type"], job["prompt"], job["input"], job["notify"]) != (
                 data.task_type,
                 data.prompt,
                 data.input,
+                data.notify,
             ):
                 raise HTTPException(409, "ai_request_id_conflict")
     if not data.sync or job["status"] not in {"pending", "running"}:
@@ -356,9 +374,10 @@ async def _execute_ai_job(db, settings, owner_id, job_id, data):
             conn.execute(
                 """
                 UPDATE ai_jobs
-                SET status='failed', error_code='internal_error', error_message=%s,
+                SET status=CASE WHEN cancel_requested THEN 'cancelled' ELSE 'failed' END,
+                    error_code='internal_error', error_message=%s,
                     finished_at=now(), updated_at=now()
-                WHERE id=%s AND status='running' AND NOT cancel_requested
+                WHERE id=%s AND status='running'
                 """,
                 ("ai_internal_execution_error", job_id),
             )
@@ -379,6 +398,7 @@ async def process_ai_queue(db, settings):
             project=job["project"],
             environment=job["environment"],
             input=job["input"],
+            notify=job["notify"],
         )
         try:
             await _run_and_save(db, settings, job["owner_id"], job["id"], data)
@@ -417,6 +437,7 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
                 "target_language": data.target_language,
             },
             sync=False,
+            notify=data.notify,
         )
         return await execute_or_reuse_ai_job(db, get_settings(request), owner_id, job)
 
@@ -441,7 +462,7 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
             ).fetchone()
         if not job or job["task_type"] != "text.translate":
             raise HTTPException(404, "ai_job_not_found")
-        if job["expires_at"] and job["expires_at"] <= datetime.now(UTC):
+        if not ai_result_available(job):
             raise HTTPException(410, "result_unavailable")
         if job["status"] != "succeeded" or not job["result"]:
             raise HTTPException(409, "result_unavailable")
@@ -462,7 +483,7 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
             ).fetchone()
         if not job:
             raise HTTPException(404, "ai_job_not_found")
-        return _serialize_job(job)
+        return present_ai_job(db, get_settings(request), job)
 
     @app.get("/api/v1/ai/jobs")
     @app.get("/api/ai/jobs")
@@ -494,7 +515,51 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
 
         with db.connect() as conn:
             rows = conn.execute(query, tuple(params)).fetchall()
-        return [_serialize_job(r) for r in rows]
+        return [present_ai_job(db, get_settings(request), r) for r in rows]
+
+    class AiReceipt(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        event_id: UUID
+
+    @app.post("/api/v1/ai/jobs/{job_id}/receipt")
+    def receive_ai_result(request: Request, job_id: UUID, data: AiReceipt):
+        owner_id, _ = authenticate_caller(request)
+        collect_ai_events(db, job_id)
+        with db.connect() as conn:
+            job = conn.execute(
+                "SELECT * FROM ai_jobs WHERE id=%s AND owner_id=%s FOR UPDATE",
+                (job_id, owner_id),
+            ).fetchone()
+            if not job:
+                raise HTTPException(404, "ai_job_not_found")
+            if (
+                not job["notify"]
+                or job["status"] != "succeeded"
+                or job["terminal_event_id"] != data.event_id
+            ):
+                raise HTTPException(409, "receipt_mismatch")
+            if job["received_at"]:
+                return {"accepted": True, "cleanup": "scheduled"}
+            if not ai_result_available(job):
+                raise HTTPException(410, "result_unavailable")
+            conn.execute(
+                "UPDATE ai_jobs SET received_at=now(),expires_at=now() WHERE id=%s", (job_id,)
+            )
+            conn.execute("UPDATE ai_deliveries SET state='acknowledged' WHERE job_id=%s", (job_id,))
+        return {"accepted": True, "cleanup": "scheduled"}
+
+    @app.post("/api/admin/ai/jobs/{job_id}/webhook-retry")
+    def retry_ai_delivery(request: Request, job_id: UUID):
+        auth.user(request, admin=True)
+        with db.connect() as conn:
+            row = conn.execute(
+                "UPDATE ai_deliveries SET state='pending',attempts=0,next_attempt_at=now() "
+                "WHERE job_id=%s AND state='failed' RETURNING id",
+                (job_id,),
+            ).fetchone()
+        if not row:
+            raise HTTPException(409, "delivery_not_failed")
+        return {"accepted": True}
 
     @app.post("/api/v1/ai/jobs/{job_id}/cancel")
     @app.post("/api/ai/jobs/{job_id}/cancel")
@@ -606,10 +671,10 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
         return {"accepted": True}
 
 
-def cleanup_translation_results(db):
+def cleanup_ai_results(db):
     with db.connect() as conn:
         conn.execute(
             "UPDATE ai_jobs SET result=NULL,prompt='',input='{}' "
-            "WHERE task_type='text.translate' AND status IN ('succeeded','failed','cancelled') "
+            "WHERE status IN ('succeeded','failed','cancelled') "
             "AND expires_at<=now() AND (result IS NOT NULL OR prompt<>'' OR input<>'{}'::jsonb)"
         )

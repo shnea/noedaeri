@@ -18,11 +18,19 @@ def signature(secret, timestamp, body):
 
 
 class Webhooks:
-    def __init__(self, db, settings):
+    def __init__(self, db, settings, *, table="deliveries", url=None):
+        if table not in {"deliveries", "ai_deliveries"}:
+            raise ValueError("Unsupported outbox")
         self.db, self.settings = db, settings
+        self.table = table
+        self.url = settings.webhook_url if url is None else url
         self.transport = None
 
     def collect(self, job_id=None):
+        if self.table == "ai_deliveries":
+            from .ai_delivery import collect_ai_events
+
+            return collect_ai_events(self.db, job_id)
         # Terminal rows are durable. Catch up after downtime, including upload timeout/recovery.
         with self.db.connect() as conn:
             rows = conn.execute(
@@ -54,7 +62,7 @@ class Webhooks:
                 }
                 conn.execute(
                     "INSERT INTO deliveries(id,job_id,body) VALUES(%s,%s,%s) "
-                    "ON CONFLICT(job_id) DO NOTHING",
+                    "ON CONFLICT DO NOTHING",
                     (
                         job["terminal_event_id"],
                         job["id"],
@@ -63,13 +71,13 @@ class Webhooks:
                 )
 
     def dispatch_one(self):
-        if not self.settings.webhook_url or not self.settings.webhook_secret:
+        if not self.url or not self.settings.webhook_secret:
             return False
         # Keep the row locked across the bounded request; process death rolls back the attempt.
         # Remote acceptance then local crash can duplicate delivery, hence stable event IDs.
         with self.db.connect() as conn:
             event = conn.execute(
-                "SELECT * FROM deliveries WHERE state='pending' AND next_attempt_at<=now() "
+                f"SELECT * FROM {self.table} WHERE state='pending' AND next_attempt_at<=now() "
                 "ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 1"
             ).fetchone()
             if not event:
@@ -88,9 +96,7 @@ class Webhooks:
                 with httpx.Client(
                     timeout=5, follow_redirects=False, trust_env=False, transport=self.transport
                 ) as client:
-                    with client.stream(
-                        "POST", self.settings.webhook_url, content=body, headers=headers
-                    ) as response:
+                    with client.stream("POST", self.url, content=body, headers=headers) as response:
                         status = response.status_code
             except httpx.HTTPError:
                 pass
@@ -101,7 +107,7 @@ class Webhooks:
                 else ("failed" if attempts >= 8 else "pending")
             )
             conn.execute(
-                "UPDATE deliveries SET state=%s,attempts=%s,last_http_status=%s,"
+                f"UPDATE {self.table} SET state=%s,attempts=%s,last_http_status=%s,"
                 "last_attempt_at=now(),next_attempt_at=now()+make_interval(secs=>%s) "
                 "WHERE id=%s",
                 (state, attempts, status, min(3600, 30 * 2 ** (attempts - 1)), event["id"]),

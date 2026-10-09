@@ -24,6 +24,7 @@ class Settings:
     result_ttl: int = 86400
     integration_key: str = ""
     webhook_url: str = ""
+    ai_webhook_url: str = ""
     webhook_secret: str = ""
     platform_result_ttl: int = 604800
     video_encoder: str = "auto"
@@ -120,6 +121,7 @@ class Settings:
             video_encoder=os.environ.get("FFMPEG_VIDEO_ENCODER") or "auto",
             integration_key=os.environ.get("NOEDAERI_PLATFORM_API_KEY", ""),
             webhook_url=os.environ.get("NOEDAERI_PLATFORM_WEBHOOK_URL", ""),
+            ai_webhook_url=os.environ.get("NOEDAERI_PLATFORM_AI_WEBHOOK_URL", ""),
             webhook_secret=os.environ.get("NOEDAERI_PLATFORM_WEBHOOK_SECRET", ""),
             platform_result_ttl=int(os.environ.get("PLATFORM_RESULT_TTL_SECONDS", "604800")),
             upload_limit=int(os.environ.get("UPLOAD_MAX_BYTES", str(5 * 1024**3))),
@@ -180,18 +182,21 @@ class Settings:
             raise ValueError("Platform API key must contain at least 32 characters")
         if settings.webhook_secret and len(settings.webhook_secret) < 32:
             raise ValueError("Webhook secret must contain at least 32 characters")
-        hook = urlparse(settings.webhook_url)
-        if settings.webhook_url and (
-            hook.scheme != "https"
-            or not hook.hostname
-            or hook.username
-            or hook.password
-            or hook.fragment
-            or hook.query
-            or not settings.webhook_secret
-            or not settings.integration_key
-        ):
-            raise ValueError("Webhook requires fixed HTTPS URL without credentials/query/fragment")
+        for url in (settings.webhook_url, settings.ai_webhook_url):
+            hook = urlparse(url)
+            if url and (
+                hook.scheme != "https"
+                or not hook.hostname
+                or hook.username
+                or hook.password
+                or hook.fragment
+                or hook.query
+                or not settings.webhook_secret
+                or not settings.integration_key
+            ):
+                raise ValueError(
+                    "Webhook requires fixed HTTPS URL without credentials/query/fragment"
+                )
         if not 3600 <= settings.platform_result_ttl <= 2592000:
             raise ValueError("Platform result retention must be between 1 hour and 30 days")
         if len(settings.worker_key) < 32:

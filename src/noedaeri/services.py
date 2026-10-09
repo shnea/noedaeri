@@ -281,6 +281,11 @@ def service_catalog(settings):
                 else "json",
                 "interface": interface,
                 "available": available,
+                "completion_webhook_available": bool(
+                    settings.ai_webhook_url and settings.webhook_secret
+                )
+                if interface in {"ai", "translation"}
+                else None,
                 "unavailable_reason": "n8n의 공통 자원 헤더 연결·검수가 필요합니다."
                 if interface in {"ai", "translation"} and not settings.n8n_compute_context_ready
                 else None,

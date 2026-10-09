@@ -159,7 +159,8 @@ def test_concurrent_dispatch_and_cancel_notification(app):
     )
     assert client.post(path + "/cancel").status_code == 200
     hooks = app.state.webhooks
-    hooks.collect()
+    with ThreadPoolExecutor(4) as pool:
+        list(pool.map(lambda _: hooks.collect(), range(4)))
     with ThreadPoolExecutor(2) as pool:
         outcomes = list(pool.map(lambda _: hooks.dispatch_one(), range(2)))
     assert outcomes.count(True) == 1

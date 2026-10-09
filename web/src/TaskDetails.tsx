@@ -15,10 +15,14 @@ export function TaskDetails({
   task,
   currentUserId,
   cancel,
+  isAdmin,
+  retryDelivery,
 }: {
   task: Exclude<Task, { source: "media" }>;
   currentUserId: string;
   cancel: () => void;
+  isAdmin: boolean;
+  retryDelivery: () => void;
 }) {
   const data = task.data;
   const translated = translationResultSchema.safeParse(data.result);
@@ -98,6 +102,54 @@ export function TaskDetails({
         {task.source === "ai" && task.status === "running" && (
           <p className="muted">취소 표시와 n8n 내부 실행 중단은 별개입니다.</p>
         )}
+        {task.source === "ai" && task.data.notify && (
+          <section className="platform-delivery" aria-label="AI 완료 알림">
+            <h3>플랫폼 전달</h3>
+            <p>
+              {task.data.received_at
+                ? "결과 수령 확인됨"
+                : task.data.delivery?.configured === false
+                  ? "AI 수신 주소 설정 필요"
+                  : ({
+                      waiting: "작업 종료 대기",
+                      pending: "완료 알림 전송 대기",
+                      delivered:
+                        task.status === "succeeded"
+                          ? "완료 알림 수신됨 · 결과 수령 확인 대기"
+                          : "완료 알림 수신됨",
+                      failed: "완료 알림 전송 실패",
+                      acknowledged: "결과 수령 확인됨",
+                    }[task.data.delivery?.state ?? "waiting"] ??
+                    "상태 확인 대기")}
+            </p>
+            {task.data.delivery && (
+              <p>
+                전송 시도 {task.data.delivery.attempts}회
+                {task.data.delivery.last_http_status
+                  ? ` · 최근 HTTP ${task.data.delivery.last_http_status}`
+                  : ""}
+              </p>
+            )}
+            {task.data.delivery?.state === "pending" &&
+              task.data.delivery.next_attempt_at && (
+                <p>
+                  다음 시도{" "}
+                  {new Date(task.data.delivery.next_attempt_at).toLocaleString(
+                    "ko-KR",
+                  )}
+                </p>
+              )}
+            {task.data.delivery?.state === "failed" && isAdmin && (
+              <button onClick={retryDelivery}>완료 알림 다시 보내기</button>
+            )}
+            {!task.data.received_at && task.status === "succeeded" && (
+              <p className="muted">
+                수신 2xx는 결과 저장 완료를 뜻하지 않습니다. 플랫폼이 저장 후
+                수령을 확인합니다.
+              </p>
+            )}
+          </section>
+        )}
         {task.source === "indexing" && task.status === "running" && (
           <p className="muted">반영 중인 색인 작업은 완료까지 기다려 주세요.</p>
         )}
@@ -105,7 +157,11 @@ export function TaskDetails({
       <section>
         <h3>{task.source === "operation" ? "실행 요약" : "결과"}</h3>
         {expired ? (
-          <p>결과 보관 기간이 만료되었습니다.</p>
+          <p>
+            {task.source === "ai" && task.data.received_at
+              ? "플랫폼에서 결과를 수령하여 보관을 종료했습니다."
+              : "결과 보관 기간이 만료되었습니다."}
+          </p>
         ) : translated.success ? (
           <>
             <p>
