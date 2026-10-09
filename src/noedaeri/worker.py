@@ -196,6 +196,7 @@ def execute_job(settings, storage, job, client, lease, source, output, alive, st
                 str(source),
                 str(output.parent),
                 job["input"]["extension"],
+                str(min(settings.upload_limit, settings.image_input_limit)),
             ],
             60,
             alive,

@@ -49,6 +49,14 @@ export const jobSchema = z.object({
 });
 
 export const serviceSchema = z.object({
+  image_limits: z
+    .object({
+      max_input_bytes: z.number(),
+      max_pixels: z.number(),
+      max_dimension: z.number(),
+    })
+    .nullable()
+    .optional(),
   ocr_limits: z
     .object({
       max_input_bytes: z.number(),

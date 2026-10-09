@@ -453,6 +453,15 @@ function NewTask({
   const [submitted, setSubmitted] = useState(false);
   const service = services.find((item) => item.kind === kind);
 
+  const imageLimit =
+    service?.ocr_limits?.max_input_bytes ??
+    service?.image_limits?.max_input_bytes ??
+    200_000_000;
+
+  const imageLimitMb = new Intl.NumberFormat("ko-KR", {
+    maximumFractionDigits: 2,
+  }).format(imageLimit / 1_000_000);
+
   async function submit(event: FormEvent) {
     event.preventDefault();
 
@@ -498,11 +507,11 @@ function NewTask({
     }
 
     if (
-      kind === "ocr.recognize" &&
-      file.size > (service.ocr_limits?.max_input_bytes ?? 32_000_000)
+      ["ocr.recognize", "image.package"].includes(kind) &&
+      file.size > imageLimit
     ) {
       setError(
-        "OCR 입력 이미지는 최대 32MB입니다. 크기를 줄인 뒤 다시 선택해 주세요.",
+        `입력 이미지는 최대 ${imageLimitMb}MB입니다. 크기를 줄인 뒤 다시 선택해 주세요.`,
       );
 
       return;
@@ -770,14 +779,14 @@ function NewTask({
       </div>
       {kind === "image.package" && (
         <p>
-          이미지 최대 32MB·4천만 화소. 첫 프레임을 사용하고 원본은 결과에
-          포함하지 않습니다.
+          이미지 최대 {imageLimitMb}MB·4천만 화소. 첫 프레임을 사용하고 원본은
+          결과에 포함하지 않습니다.
         </p>
       )}
       {kind === "ocr.recognize" && (
         <p>
-          이미지 최대 32MB·4천만 화소·가로세로 각 10,000px. 방향을 보정한 첫
-          프레임을 최대 4,096px로 축소해 인식합니다.
+          이미지 최대 {imageLimitMb}MB·4천만 화소·가로세로 각 10,000px. 방향을
+          보정한 첫 프레임을 최대 4,096px로 축소해 인식합니다.
           {service?.ocr_limits &&
             ` 처리 제한 ${service.ocr_limits.timeout_seconds}초.`}{" "}
           PDF·표 구조 복원은 지원하지 않습니다. 입력은 작업 종료 후 정리됩니다.

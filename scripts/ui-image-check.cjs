@@ -21,7 +21,7 @@ p=Path(sys.argv[1]); im=Image.new('RGBA',(1200,800),(220,240,225,255)); d=ImageD
       const path=new URL(route.request().url()).pathname;
       if(path.endsWith('/preview.webp'))return route.fulfill({body:await fs.readFile(root+'/out/preview.webp'),contentType:'image/webp'});
       if(path==='/api/jobs'&&route.request().method()==='POST'){payload=route.request().postDataJSON();return route.fulfill({json:{...job,status:'uploading'}});}
-      const data=path==='/api/me'?{id:'fixture',role:'admin',status:'approved',csrf:'fixture'}:path==='/api/tasks'?mediaTasks([job],route.request().url()):path==='/api/services'?[{kind:'image.package',service:'image',label:'이미지 통합 처리',input_type:'upload'}]:[];
+      const data=path==='/api/me'?{id:'fixture',role:'admin',status:'approved',csrf:'fixture'}:path==='/api/tasks'?mediaTasks([job],route.request().url()):path==='/api/compute'?{concurrency:1,requests:[]}:path==='/api/services'?[{kind:'image.package',service:'image',label:'이미지 통합 처리',input_type:'upload'}]:[];
       return route.fulfill({json:data});
     });
     await page.goto('http://127.0.0.1:5173/');
@@ -40,6 +40,15 @@ p=Path(sys.argv[1]); im=Image.new('RGBA',(1200,800),(220,240,225,255)); d=ImageD
     await page.getByRole('button',{name:'새 작업',exact:true}).click();
     await page.getByLabel('작업명',{exact:true}).fill('이미지 요청');
     await page.getByLabel('입력 이미지',{exact:true}).setInputFiles(root+'/input.png');
+    await page.getByText(/이미지 최대 200MB/).waitFor();
+    for (const [name,width] of [['desktop',1440],['mobile',390]]) {
+      await page.setViewportSize({width,height:1000});
+      await page.evaluate(()=>scrollTo(0,0));
+      await page.evaluate(()=>document.fonts.ready);
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      await page.screenshot({animations:'disabled',path:'.impeccable/review/image-limit-form-'+name+'.png',fullPage:true});
+      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    }
     await page.getByRole('button',{name:'작업 시작',exact:true}).click();
     await page.getByRole('heading',{name:'새 작업',exact:true}).waitFor({state:'hidden'});
     assert.deepEqual(payload.input,{type:'upload',extension:'png'});

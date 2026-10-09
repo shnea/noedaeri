@@ -100,6 +100,21 @@ def test_palette_alpha_with_profile_and_byte_limit(tmp_path):
         assert preview.getpixel((0, 0))[3] == 0
         assert not preview.info.get("icc_profile")
     with source.open("wb") as target:
-        target.truncate(32_000_001)
+        target.truncate(200_000_001)
     with pytest.raises(ValueError, match="unsupported_media"):
         images.convert(source, tmp_path / "oversize", "png")
+
+
+def test_large_image_and_configurable_input_limit(tmp_path):
+    source = tmp_path / "large.bmp"
+    Image.new("RGB", (4000, 3000), "white").save(source, format="BMP")
+    assert source.stat().st_size > 32_000_000
+    info = images.prepare_ocr(source, tmp_path / "ocr.png", "bmp")
+    assert info["width"] == 4000 and info["height"] == 3000
+    images.convert(source, tmp_path / "converted", "bmp")
+    Image.new("RGB", (10, 10), "white").save(source, format="BMP")
+    with source.open("r+b") as target:
+        target.truncate(200_000_001)
+    with pytest.raises(ValueError, match="unsupported_media"):
+        images.prepare_ocr(source, tmp_path / "default.png", "bmp")
+    assert images.prepare_ocr(source, tmp_path / "raised.png", "bmp", 400_000_000)["width"] == 10

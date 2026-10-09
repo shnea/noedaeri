@@ -14,7 +14,7 @@ const {mediaTasks} = require('./ui-fixtures.cjs');
     let payload, uploaded = false, approved = true, failResult = true, cancelled, silent = false;
     const service = {kind: 'ocr.recognize', service: 'ocr', label: '이미지 문자 인식 · 텍스트 + 줄별 위치',
       interface: 'media', input_type: 'upload', available: true,
-      ocr_limits: {max_input_bytes: 32000000, max_pixels: 40000000, max_dimension: 10000, processing_dimension: 4096, timeout_seconds: 120}};
+      ocr_limits: {max_input_bytes: 200000000, max_pixels: 40000000, max_dimension: 10000, processing_dimension: 4096, timeout_seconds: 120}};
     const base = {kind: service.kind, service: 'ocr', options: {language: 'auto', language_correction: true},
       owner_id: 'fixture-user', worker_id: null, created_at: now, updated_at: now,
       finished_at: null, expires_at: null, cancel_requested: false, error_code: null,
@@ -60,6 +60,7 @@ const {mediaTasks} = require('./ui-fixtures.cjs');
       await page.screenshot({animations: 'disabled', path: `.impeccable/review/ocr-form-${name}.png`, fullPage: true});
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     }
+    await page.getByText(/이미지 최대 200MB/).waitFor();
     await page.getByRole('button', {name: '작업 시작', exact: true}).click();
     await page.getByRole('button', {name: '새 문자 인식 테스트', exact: true}).waitFor();
     assert.equal(uploaded, true);
@@ -95,6 +96,20 @@ const {mediaTasks} = require('./ui-fixtures.cjs');
     await page.getByRole('button', {name: '가상 문서 문자 인식', exact: true}).click();
     await page.getByText('보관 기간이 만료되었습니다.', {exact: true}).waitFor();
     assert.equal(await page.getByRole('link', {name: '텍스트 다운로드', exact: true}).count(), 0);
+    // Server settings change the displayed/validated limit without a web rebuild.
+    service.ocr_limits.max_input_bytes = 400000000;
+    await page.reload();
+    await page.getByRole('button', {name: '새 작업', exact: true}).click();
+    await page.getByText(/이미지 최대 400MB/).waitFor();
+    await page.getByRole('button', {name: '닫기', exact: true}).click();
+    service.ocr_limits.max_input_bytes = 1000000;
+    await page.reload();
+    await page.getByRole('button', {name: '새 작업', exact: true}).click();
+    await page.getByLabel('작업명', {exact: true}).fill('한도 검수');
+    await page.getByLabel('입력 이미지', {exact: true}).setInputFiles({name:'large.png', mimeType:'image/png', buffer:Buffer.alloc(1000001)});
+    await page.getByRole('button', {name: '작업 시작', exact: true}).click();
+    await page.getByText('입력 이미지는 최대 1MB입니다. 크기를 줄인 뒤 다시 선택해 주세요.', {exact:true}).waitFor();
+    assert.equal(jobs.length, 2);
     approved = false;
     await page.reload();
     await page.getByText('관리자 승인을 기다리고 있습니다.', {exact: true}).waitFor();

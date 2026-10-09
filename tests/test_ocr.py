@@ -51,6 +51,9 @@ def test_ocr_catalog_validation_idempotency_and_access(app, monkeypatch):
     catalog = {row["kind"]: row for row in client.get("/api/services").json()}
     assert catalog["ocr.recognize"]["available"] is True
     assert catalog["ocr.recognize"]["ocr_limits"]["max_pixels"] == 40_000_000
+    assert (
+        catalog["ocr.recognize"]["ocr_limits"]["max_input_bytes"] == app.state.settings.upload_limit
+    )
     assert create_ocr(client, options={"language": "invalid"}).status_code == 422
     assert create_ocr(client, options={"seconds": 0}).status_code == 422
     key = uuid4()
@@ -128,7 +131,8 @@ def test_ocr_callback_result_receipt(app, monkeypatch):
     assert client.get(f"/api/v1/jobs/{key}/result").status_code == 410
 
 
-def test_ocr_upload_specific_limit_and_retry(app, monkeypatch):
+@pytest.mark.parametrize("kind", ["ocr.recognize", "image.package"])
+def test_ocr_upload_specific_limit_and_retry(app, monkeypatch, kind):
     from fastapi.testclient import TestClient
 
     from noedaeri.api import create_app
@@ -138,6 +142,7 @@ def test_ocr_upload_specific_limit_and_retry(app, monkeypatch):
         replace(
             app.state.settings,
             ocr_enabled=True,
+            image_input_limit=32_000_000,
             upload_limit=33_000_000,
             storage_limit=128 * 1024**2,
         )
@@ -145,7 +150,19 @@ def test_ocr_upload_specific_limit_and_retry(app, monkeypatch):
     with TestClient(limited, base_url="https://testserver") as client:
         limited.state.client = client
         login(limited)
-        job = create_ocr(client).json()
+        job = client.post(
+            "/api/jobs",
+            json={
+                "kind": kind,
+                "title": "이미지 한도 검수",
+                "idempotency_key": str(uuid4()),
+                "input": {"type": "upload", "extension": "png"},
+                "options": {},
+            },
+        ).json()
+        row = next(row for row in client.get("/api/services").json() if row["kind"] == kind)
+        limits = row["ocr_limits"] if kind == "ocr.recognize" else row["image_limits"]
+        assert limits["max_input_bytes"] == 32_000_000
         url = f"/api/jobs/{job['id']}/input"
         response = client.put(
             url, content=b"x" * 32_000_001, headers={"Content-Type": "application/octet-stream"}
@@ -158,6 +175,21 @@ def test_ocr_upload_specific_limit_and_retry(app, monkeypatch):
             ).status_code
             == 200
         )
+
+
+def test_image_limit_settings(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "fixture")
+    monkeypatch.setenv("WORKER_API_KEY", "x" * 32)
+    monkeypatch.setenv("PUBLIC_ORIGIN", "https://fixture.example")
+    monkeypatch.setenv("PLATFORM_OIDC_REDIRECT_URI", "https://fixture.example/auth/callback")
+    monkeypatch.delenv("IMAGE_MAX_INPUT_BYTES", raising=False)
+    assert Settings.from_env().image_input_limit == 200_000_000
+    monkeypatch.setenv("IMAGE_MAX_INPUT_BYTES", "400000000")
+    assert Settings.from_env().image_input_limit == 400_000_000
+    for invalid in ("0", "-1", str(5 * 1024**3 + 1)):
+        monkeypatch.setenv("IMAGE_MAX_INPUT_BYTES", invalid)
+        with pytest.raises(ValueError, match="Image input limit"):
+            Settings.from_env()
 
 
 def test_ocr_image_normalization_and_rejection(tmp_path):
@@ -241,3 +273,19 @@ def test_ocr_missing_runtime(tmp_path, monkeypatch):
     settings, storage, job = setup_source(tmp_path, b"fixture")
     with pytest.raises(MediaError, match="ocr_not_configured"):
         recognize(settings, storage, job, lambda: True, lambda _: None, lambda _: None)
+
+
+@pytest.mark.skipif(os.environ.get("RUN_OCR_SMOKE") != "1", reason="Native Vision OCR opt-in")
+def test_native_ocr_large_bmp(tmp_path):
+    settings, storage, job = setup_source(tmp_path, b"placeholder")
+    source = storage.path("uploads", job["id"], "input")
+    image = Image.new("RGB", (4000, 3000), "white")
+    font = ImageFont.truetype("/System/Library/Fonts/AppleSDGothicNeo.ttc", 80)
+    ImageDraw.Draw(image).text((100, 100), "Hello OCR 200 MB", font=font, fill="black")
+    image.save(source, format="BMP")
+    assert 32_000_000 < source.stat().st_size < settings.image_input_limit
+    job["input"]["extension"] = "bmp"
+    result = recognize(settings, storage, job, lambda: True, lambda _: None, lambda _: None)
+    data = json.loads(storage.path("results", job["id"], "text.json").read_text())
+    assert "Hello OCR 200 MB" in data["text"]
+    assert result["source"]["original"] == {"width": 4000, "height": 3000}

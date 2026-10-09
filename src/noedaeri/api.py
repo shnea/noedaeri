@@ -516,6 +516,8 @@ def create_app(settings: Settings | None = None):
             incoming = settings.upload_limit
             if service.service == "tts":
                 incoming = min(settings.upload_limit, 32_000_000)
+            if service.service in {"image", "ocr"}:
+                incoming = min(settings.upload_limit, settings.image_input_limit)
             if not storage.available(reserved + incoming):
                 raise HTTPException(507, "storage_capacity_exceeded")
             job = conn.execute(
@@ -573,8 +575,8 @@ def create_app(settings: Settings | None = None):
                         limit = (
                             min(settings.upload_limit, SAMPLE_LIMIT)
                             if job["kind"] == "tts.voice.register"
-                            else min(settings.upload_limit, 32_000_000)
-                            if job["kind"] == "ocr.recognize"
+                            else min(settings.upload_limit, settings.image_input_limit)
+                            if job["kind"] in {"ocr.recognize", "image.package"}
                             else settings.upload_limit
                         )
                         if size > limit:

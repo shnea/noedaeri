@@ -28,11 +28,11 @@ FORMATS = {
 }
 
 
-def load_frame(source: Path, extension: str):
+def load_frame(source: Path, extension: str, max_input_bytes: int = 200_000_000):
     register_heif_opener(thumbnails=False, decode_threads=1)
     Image.MAX_IMAGE_PIXELS = 40_000_000
     warnings.simplefilter("error", Image.DecompressionBombWarning)
-    if source.stat().st_size > 32_000_000 or extension not in FORMATS:
+    if source.stat().st_size > max_input_bytes or extension not in FORMATS:
         raise ValueError("unsupported_media")
     expected, mime = FORMATS[extension]
     with Image.open(source, formats=[expected]) as opened:
@@ -62,8 +62,8 @@ def load_frame(source: Path, extension: str):
     return frame, expected, mime
 
 
-def prepare_ocr(source: Path, output: Path, extension: str):
-    frame, expected, mime = load_frame(source, extension)
+def prepare_ocr(source: Path, output: Path, extension: str, max_input_bytes: int = 200_000_000):
+    frame, expected, mime = load_frame(source, extension, max_input_bytes)
     original = {"width": frame.width, "height": frame.height}
     frame.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
     opaque = Image.new("RGB", frame.size, "white")
@@ -79,8 +79,8 @@ def prepare_ocr(source: Path, output: Path, extension: str):
     }
 
 
-def convert(source: Path, folder: Path, extension: str):
-    frame, expected, mime = load_frame(source, extension)
+def convert(source: Path, folder: Path, extension: str, max_input_bytes: int = 200_000_000):
+    frame, expected, mime = load_frame(source, extension, max_input_bytes)
     folder.mkdir(parents=True, exist_ok=False, mode=0o700)
     preview = frame.copy()
     preview.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
@@ -131,9 +131,19 @@ if __name__ == "__main__":
     resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
     try:
         result = (
-            prepare_ocr(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
+            prepare_ocr(
+                Path(sys.argv[2]),
+                Path(sys.argv[3]),
+                sys.argv[4],
+                int(sys.argv[5]) if len(sys.argv) > 5 else 200_000_000,
+            )
             if ocr
-            else convert(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])
+            else convert(
+                Path(sys.argv[1]),
+                Path(sys.argv[2]),
+                sys.argv[3],
+                int(sys.argv[4]) if len(sys.argv) > 4 else 200_000_000,
+            )
         )
     except Exception:
         # Codec diagnostics and original metadata must not escape into process logs.

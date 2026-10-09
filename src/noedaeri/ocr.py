@@ -60,6 +60,7 @@ def recognize(settings, storage, job, alive, stage, reserve):
                 str(source),
                 str(image),
                 job["input"]["extension"],
+                str(min(settings.upload_limit, settings.image_input_limit)),
             ],
             min(60, remaining()),
             alive,

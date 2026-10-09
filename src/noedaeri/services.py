@@ -190,8 +190,15 @@ def service_catalog(settings):
                 if item.service == "ocr"
                 else True
             ),
+            "image_limits": {
+                "max_input_bytes": min(settings.upload_limit, settings.image_input_limit),
+                "max_pixels": 40_000_000,
+                "max_dimension": 10000,
+            }
+            if item.service == "image"
+            else None,
             "ocr_limits": {
-                "max_input_bytes": 32_000_000,
+                "max_input_bytes": min(settings.upload_limit, settings.image_input_limit),
                 "max_pixels": 40_000_000,
                 "max_dimension": 10000,
                 "processing_dimension": 4096,

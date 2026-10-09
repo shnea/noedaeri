@@ -42,6 +42,7 @@ class Settings:
     tts_enabled: bool = False
     ocr_enabled: bool = False
     ocr_timeout: int = 120
+    image_input_limit: int = 200_000_000
     stt_enabled: bool = False
     stt_timeout: int = 900
     stt_max_duration: int = 3600
@@ -67,6 +68,7 @@ class Settings:
             tts_enabled=os.environ.get("TTS_ENABLED", "0") == "1",
             ocr_enabled=os.environ.get("OCR_ENABLED", "0") == "1",
             ocr_timeout=int(os.environ.get("OCR_TIMEOUT_SECONDS", "120")),
+            image_input_limit=int(os.environ.get("IMAGE_MAX_INPUT_BYTES", "200000000")),
             stt_enabled=os.environ.get("STT_ENABLED", "0") == "1",
             stt_timeout=int(os.environ.get("STT_TIMEOUT_SECONDS", "900")),
             stt_max_duration=int(os.environ.get("STT_MAX_DURATION_SECONDS", "3600")),
@@ -158,6 +160,8 @@ class Settings:
             raise ValueError("Invalid Raya execution policy")
         if settings.upload_limit <= 0 or settings.storage_limit <= settings.upload_limit:
             raise ValueError("Storage capacity must exceed the positive upload limit")
+        if not 1 <= settings.image_input_limit <= 5 * 1024**3:
+            raise ValueError("Image input limit must be between 1 byte and 5 GiB")
         if not 30 <= settings.ocr_timeout <= 600:
             raise ValueError("OCR timeout must be between 30 and 600 seconds")
         if settings.integration_key and len(settings.integration_key) < 32:
