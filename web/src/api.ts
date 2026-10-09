@@ -91,7 +91,16 @@ export const serviceSchema = z.object({
   label: z.string(),
   input_type: z.string(),
   interface: z
-    .enum(["media", "ai", "raya", "embedding", "indexing", "search", "tts"])
+    .enum([
+      "media",
+      "ai",
+      "raya",
+      "embedding",
+      "indexing",
+      "search",
+      "tts",
+      "translation",
+    ])
     .default("media"),
   available: z.boolean().default(true),
   task_types: z
@@ -146,6 +155,15 @@ export const aiJobSchema = z.object({
   updated_at: z.string().nullable().optional(),
   finished_at: z.string().nullable().optional(),
   expires_at: z.string().nullable().optional(),
+});
+
+export const translationResultSchema = z.object({
+  type: z.literal("text_translate"),
+  translated_text: z.string(),
+  source_language: z.string(),
+  target_language: z.string(),
+  provider: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
 });
 
 export type AiJobResult = z.infer<typeof aiJobSchema>["result"];
@@ -360,6 +378,10 @@ const messages = new Map(
     unsupported_media: "지원 형식과 입력 길이를 확인해 주세요.",
     tts_not_configured:
       "TTS 설치와 연결 설정이 필요합니다. 관리자에게 확인해 주세요.",
+    translation_not_configured:
+      "번역 연결이 준비되지 않았습니다. 관리자에게 n8n 연결 상태를 확인해 주세요.",
+    translation_invalid_result:
+      "번역 결과 형식이 올바르지 않습니다. 새 작업으로 다시 요청해 주세요.",
     pdf_encrypted:
       "암호화된 PDF는 처리할 수 없습니다. 암호화를 해제한 사본으로 요청해 주세요.",
     pdf_page_limit_exceeded:

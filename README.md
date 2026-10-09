@@ -203,3 +203,6 @@ DB 검사는 로컬 소켓만 사용하는 일회성 PostgreSQL을 띄운 뒤 �
 
 영상 자막은 `video.subtitles`로 STT 런타임을 재사용해 SRT·VTT를 생성한다.
 시각은 VAD 구간의 근사 분할이며 단어별 정렬이 아니다. [실행·검수 기록](docs/SUBTITLES_RUNTIME.md).
+
+문장 번역은 `/api/v1/translations`로 공통 AI Job에 등록하고 n8n 모델 라우팅을 사용한다.
+원문 최대 4,000자·7언어·TXT·사용량·만료 정리를 제공한다. [실행 기록](docs/TRANSLATION_RUNTIME.md).

@@ -20,7 +20,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .ai_indexing import cleanup_indexing_results, install_indexing_routes, process_indexing_queue
-from .ai_jobs import install_ai_job_routes, process_ai_queue
+from .ai_jobs import cleanup_translation_results, install_ai_job_routes, process_ai_queue
 from .auth import COOKIE, Auth, digest
 from .compute import Compute
 from .config import Settings
@@ -184,6 +184,7 @@ def create_app(settings: Settings | None = None):
                 await asyncio.to_thread(storage.cleanup, db)
                 await asyncio.to_thread(cleanup_indexing_results, db)
                 await asyncio.to_thread(cleanup_operation_results, db)
+                await asyncio.to_thread(cleanup_translation_results, db)
             except Exception:
                 # Never emit connection strings, stored payloads or credentials to logs.
                 import logging

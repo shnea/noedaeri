@@ -133,7 +133,7 @@ def list_tasks(db, user, present_media, limit, offset, status=None, service=None
         (
             "ai",
             "ai_jobs",
-            "'n8n'",
+            "CASE WHEN task_type='text.translate' THEN 'translation' ELSE 'n8n' END",
             "CASE WHEN status='pending' THEN 'queued' ELSE status END",
             "owner_id=%s OR %s",
         ),
@@ -183,7 +183,11 @@ def list_tasks(db, user, present_media, limit, offset, status=None, service=None
                 if job["expires_at"] and job["expires_at"] <= datetime.now(UTC):
                     data["result"] = None
                 title = AI_TASK_TYPES.get(job["task_type"], job["task_type"])
-                kind, label, executor = "ai.workflow", title, "n8n"
+                kind, label, executor = (
+                    "text.translate" if job["task_type"] == "text.translate" else "ai.workflow",
+                    title,
+                    "n8n",
+                )
             elif row["source"] == "indexing":
                 from .ai_indexing import serialize_job
 

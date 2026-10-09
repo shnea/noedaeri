@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import httpx
 from manage import ROOT, decrypt
 from prepare_n8n_compute import EXECUTION_SETTINGS, prepare
+from prepare_n8n_translation import prepare_translation
 
 
 def require(response):
@@ -28,6 +29,9 @@ def main():
     parser.add_argument(
         "--apply", action="store_true", help="Save and activate the prepared workflow"
     )
+    parser.add_argument(
+        "--translation", action="store_true", help="Add typed sentence translation branch"
+    )
     args = parser.parse_args()
     path = ROOT / "config/n8n.enc.env"
     values = decrypt(path)
@@ -43,8 +47,13 @@ def main():
         endpoint = "workflows/" + values["N8N_RAYA_WORKFLOW_ID"]
         remote = require(client.get(endpoint))
         prepared = prepare(remote)
+        if args.translation:
+            prepared = prepare_translation(prepared)
         if not args.apply:
-            print("Prepared two HTTP headers, context isolation and execution data policy.")
+            print(
+                "Prepared compute context and execution data policy"
+                + (" with typed translation branch." if args.translation else ".")
+            )
             print("Existing nodes, branch connections, prompts and credentials are preserved.")
             print("Read-only preview; no server or configuration changes.")
             return

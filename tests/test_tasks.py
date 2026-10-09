@@ -87,6 +87,7 @@ def test_catalog_contains_every_implemented_service_and_configuration_state(app,
         "ocr.recognize",
         "pdf.extract",
         "ai.workflow",
+        "text.translate",
         "raya.route",
         "embedding.encode",
         "indexing.documents",
@@ -107,6 +108,7 @@ def test_catalog_contains_every_implemented_service_and_configuration_state(app,
     rows = {row["kind"]: row for row in client.get("/api/services").json()}
     assert all(row["available"] for row in rows.values())
     assert "blog.summary" in {row["value"] for row in rows["ai.workflow"]["task_types"]}
+    assert "text.translate" not in {row["value"] for row in rows["ai.workflow"]["task_types"]}
     # Catalog entries do not accidentally become accepted media worker jobs.
     assert (
         client.post(

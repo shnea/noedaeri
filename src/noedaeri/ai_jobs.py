@@ -1,20 +1,21 @@
 import asyncio
 import json
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .auth import Auth
 from .compute import Compute, compute_context, guard_key
 from .config import Settings
 from .db import Database
 from .integration import PLATFORM_OWNER
+from .translation import TranslationOptions, TranslationRequest, translation_result
 
 
 class AiJobCreate(BaseModel):
@@ -26,6 +27,15 @@ class AiJobCreate(BaseModel):
     environment: str = Field(default="production", min_length=1, max_length=128)
     input: dict[str, Any] = Field(default_factory=dict)
     sync: bool = True
+
+    @model_validator(mode="after")
+    def validate_translation(self):
+        if self.task_type == "text.translate":
+            self.prompt = self.prompt.strip()
+            options = TranslationOptions.model_validate(self.input)
+            TranslationRequest(request_id=self.request_id, text=self.prompt, **options.model_dump())
+            self.input = options.model_dump()
+        return self
 
 
 class AiUsageReport(BaseModel):
@@ -65,6 +75,8 @@ def _serialize_job(job: dict) -> dict:
     serialized = {}
     for key in PUBLIC_AI_JOB_FIELDS:
         val = job.get(key)
+        if key == "result" and job.get("expires_at") and job["expires_at"] <= datetime.now(UTC):
+            val = None
         if isinstance(val, UUID):
             serialized[key] = str(val)
         elif isinstance(val, datetime):
@@ -162,6 +174,10 @@ def record_usage(
 async def execute_or_reuse_ai_job(
     db: Database, settings: Settings, owner_id: UUID, data: AiJobCreate
 ) -> dict:
+    if data.task_type == "text.translate" and (
+        not settings.n8n_ai_webhook_url or not settings.n8n_compute_context_ready
+    ):
+        raise HTTPException(503, "translation_not_configured")
     with db.connect() as conn:
         job = conn.execute(
             "INSERT INTO ai_jobs(id,owner_id,project,environment,request_id,task_type,prompt,input,"
@@ -256,7 +272,7 @@ async def _execute_ai_job(db, settings, owner_id, job_id, data):
         async with Compute(db, settings.storage_root).slot(
             "ai",
             job_id,
-            "ai.workflow",
+            "text.translate" if data.task_type == "text.translate" else "ai.workflow",
             owner_id,
             settings.native_wait,
             alive=runnable,
@@ -268,6 +284,13 @@ async def _execute_ai_job(db, settings, owner_id, job_id, data):
                 # A finished workflow can report provider failure with HTTP 200.
                 # This is a known terminal failure, not an unconfirmed remote execution.
                 raise HTTPException(424, "n8n_workflow_failed")
+            if data.task_type == "text.translate":
+                translated = translation_result(
+                    n8n_result, TranslationOptions.model_validate(data.input)
+                )
+                if translated is None:
+                    raise HTTPException(502, "translation_invalid_result")
+                n8n_result = translated
             with db.connect() as conn:
                 conn.execute(
                     """
@@ -375,9 +398,27 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
                 curr_settings.integration_key.encode(),
             ):
                 raise HTTPException(401, "platform_key_required")
-            return PLATFORM_OWNER, True
+            return PLATFORM_OWNER, False
         user = auth.user(request)
         return user["id"], (user.get("role") == "admin")
+
+    @app.post("/api/v1/translations", status_code=202)
+    @app.post("/api/translations", status_code=202)
+    async def create_translation(request: Request, data: TranslationRequest):
+        owner_id, _ = authenticate_caller(request)
+        job = AiJobCreate(
+            request_id=data.request_id,
+            task_type="text.translate",
+            prompt=data.text,
+            project=data.project,
+            environment=data.environment,
+            input={
+                "source_language": data.source_language,
+                "target_language": data.target_language,
+            },
+            sync=False,
+        )
+        return await execute_or_reuse_ai_job(db, get_settings(request), owner_id, job)
 
     @app.post("/api/v1/ai/jobs", status_code=200)
     async def create_platform_ai_job(request: Request, data: AiJobCreate):
@@ -388,6 +429,27 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
     async def create_web_ai_job(request: Request, data: AiJobCreate):
         owner_id, _ = authenticate_caller(request)
         return await execute_or_reuse_ai_job(db, get_settings(request), owner_id, data)
+
+    @app.get("/api/v1/ai/jobs/{job_id}/translation.txt")
+    @app.get("/api/ai/jobs/{job_id}/translation.txt")
+    def download_translation(request: Request, job_id: UUID):
+        owner_id, is_admin = authenticate_caller(request)
+        with db.connect() as conn:
+            job = conn.execute(
+                "SELECT * FROM ai_jobs WHERE id=%s AND (%s OR owner_id=%s)",
+                (job_id, is_admin, owner_id),
+            ).fetchone()
+        if not job or job["task_type"] != "text.translate":
+            raise HTTPException(404, "ai_job_not_found")
+        if job["expires_at"] and job["expires_at"] <= datetime.now(UTC):
+            raise HTTPException(410, "result_unavailable")
+        if job["status"] != "succeeded" or not job["result"]:
+            raise HTTPException(409, "result_unavailable")
+        return Response(
+            job["result"]["translated_text"],
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="translation.txt"'},
+        )
 
     @app.get("/api/v1/ai/jobs/{job_id}")
     @app.get("/api/ai/jobs/{job_id}")
@@ -542,3 +604,12 @@ def install_ai_job_routes(app: FastAPI, db: Database, auth: Auth, settings: Sett
                 model_tier=data.model_tier,
             )
         return {"accepted": True}
+
+
+def cleanup_translation_results(db):
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE ai_jobs SET result=NULL,prompt='',input='{}' "
+            "WHERE task_type='text.translate' AND status IN ('succeeded','failed','cancelled') "
+            "AND expires_at<=now() AND (result IS NOT NULL OR prompt<>'' OR input<>'{}'::jsonb)"
+        )

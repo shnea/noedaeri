@@ -452,6 +452,8 @@ function NewTask({
   const [title, setTitle] = useState(retryJob?.title ?? "");
   const [taskType, setTaskType] = useState("chat.general");
   const [prompt, setPrompt] = useState("");
+  const [sourceLanguage, setSourceLanguage] = useState("auto");
+  const [targetLanguage, setTargetLanguage] = useState("en");
   const [file, setFile] = useState<File | null>(null);
   const [seconds, setSeconds] = useState(retryJob?.options?.seconds ?? 0);
 
@@ -486,6 +488,41 @@ function NewTask({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+
+    if (service?.interface === "translation") {
+      setBusy(true);
+      setError("");
+
+      try {
+        const response = await request(
+          "/api/translations",
+          mutation(
+            user.csrf,
+            JSON.stringify({
+              request_id: key,
+              text: prompt.trim(),
+              source_language: sourceLanguage,
+              target_language: targetLanguage,
+              project: "web-test",
+              environment: "production",
+            }),
+          ),
+        );
+
+        aiJobSchema.parse(await response.json());
+        done();
+      } catch (failure) {
+        setError(
+          failure instanceof Error
+            ? failure.message
+            : "번역 작업을 등록하지 못했습니다.",
+        );
+      } finally {
+        setBusy(false);
+      }
+
+      return;
+    }
 
     if (service?.interface === "ai") {
       setBusy(true);
@@ -626,7 +663,9 @@ function NewTask({
             }}
           >
             {services
-              .filter((item) => ["media", "ai"].includes(item.interface))
+              .filter((item) =>
+                ["media", "ai", "translation"].includes(item.interface),
+              )
               .map((item) => (
                 <option
                   key={item.kind}
@@ -657,6 +696,70 @@ function NewTask({
               }
             />
           </label>
+        )}
+        {service?.interface === "translation" && (
+          <>
+            <label>
+              원문 언어
+              <select
+                aria-label="원문 언어"
+                value={sourceLanguage}
+                disabled={busy}
+                onChange={(event) => setSourceLanguage(event.target.value)}
+              >
+                <option value="auto">자동 감지</option>
+                {[
+                  ["ko", "한국어"],
+                  ["en", "영어"],
+                  ["ja", "일본어"],
+                  ["zh", "중국어"],
+                  ["es", "스페인어"],
+                  ["fr", "프랑스어"],
+                  ["de", "독일어"],
+                ].map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              번역 언어
+              <select
+                aria-label="번역 언어"
+                value={targetLanguage}
+                disabled={busy}
+                onChange={(event) => setTargetLanguage(event.target.value)}
+              >
+                {[
+                  ["ko", "한국어"],
+                  ["en", "영어"],
+                  ["ja", "일본어"],
+                  ["zh", "중국어"],
+                  ["es", "스페인어"],
+                  ["fr", "프랑스어"],
+                  ["de", "독일어"],
+                ].map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="wide-field">
+              번역할 문장
+              <textarea
+                aria-label="번역할 문장"
+                required
+                rows={6}
+                maxLength={4000}
+                value={prompt}
+                disabled={busy}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="번역할 원문을 입력하세요."
+              />
+            </label>
+          </>
         )}
         {service?.interface === "ai" && (
           <>
@@ -855,6 +958,12 @@ function NewTask({
           결과는 텍스트와 구간별 시각이며, 입력은 작업 종료 후 정리됩니다.
           {kind === "video.subtitles" &&
             " SRT·VTT 자막도 생성합니다. 자막 시각은 음성 구간을 나눈 근사값이며, 단어별 정렬·화자 구분·영상에 자막 입히기는 제공하지 않습니다."}
+        </p>
+      )}
+      {service?.interface === "translation" && (
+        <p>
+          최대 4,000자. 기존 n8n 모델 라우팅을 사용하며 외부 AI 공급자에게
+          원문을 전송합니다. 의미·고유명사·숫자를 원문과 대조해 주세요.
         </p>
       )}
       <p>웹 테스트 결과는 생성 완료 후 24시간 보관됩니다.</p>
@@ -1523,7 +1632,11 @@ export default function App() {
                             user.role !== "admin")
                         }
                         onClick={() => {
-                          if (["media", "ai"].includes(service.interface)) {
+                          if (
+                            ["media", "ai", "translation"].includes(
+                              service.interface,
+                            )
+                          ) {
                             setRetryJob(null);
                             setNewKind(service.kind);
                             setTab("작업");
@@ -1549,7 +1662,9 @@ export default function App() {
                         {" "}
                         {service.interface === "raya"
                           ? "실행 정책·테스트"
-                          : ["media", "ai"].includes(service.interface)
+                          : ["media", "ai", "translation"].includes(
+                                service.interface,
+                              )
                             ? "작업 만들기"
                             : "관리·테스트"}
                       </button>

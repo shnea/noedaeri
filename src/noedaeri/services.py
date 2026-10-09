@@ -173,6 +173,7 @@ SERVICES = {
 }
 
 AI_TASK_TYPES = {
+    "text.translate": "문장 번역",
     "blog.tags": "블로그 태그 생성",
     "blog.summary": "블로그 요약",
     "article.draft": "글 초안 작성",
@@ -240,6 +241,13 @@ def service_catalog(settings):
     ]
     for kind, service, label, interface, available in (
         (
+            "text.translate",
+            "translation",
+            "문장 번역 · n8n",
+            "translation",
+            bool(settings.n8n_ai_webhook_url) and settings.n8n_compute_context_ready,
+        ),
+        (
             "ai.workflow",
             "n8n",
             "AI 작업 · n8n 워크플로",
@@ -268,14 +276,18 @@ def service_catalog(settings):
                 "kind": kind,
                 "service": service,
                 "label": label,
-                "input_type": "text" if interface in {"ai", "embedding", "raya"} else "json",
+                "input_type": "text"
+                if interface in {"ai", "embedding", "raya", "translation"}
+                else "json",
                 "interface": interface,
                 "available": available,
                 "unavailable_reason": "n8n의 공통 자원 헤더 연결·검수가 필요합니다."
-                if interface == "ai" and not settings.n8n_compute_context_ready
+                if interface in {"ai", "translation"} and not settings.n8n_compute_context_ready
                 else None,
                 "task_types": [
-                    {"value": key, "label": value} for key, value in AI_TASK_TYPES.items()
+                    {"value": key, "label": value}
+                    for key, value in AI_TASK_TYPES.items()
+                    if key != "text.translate"
                 ]
                 if interface == "ai"
                 else [],

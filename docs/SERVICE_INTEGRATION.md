@@ -1,6 +1,38 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 24 · 기준일: 2026-10-10
+문서 버전: 25 · 기준일: 2026-10-10
+
+## 문장 번역 · n8n
+
+`text.translate`는 기존 n8n 모델 라우팅에 번역 전용 지침을 추가한다. 새 로컬 모델은 설치하지
+않는다. 파일 Job과 같은 공통 자원 예약을 사용하고 통합 작업 목록·서비스 목록에 표시한다.
+실행 이력은 기존 AI Job이며 `POST /api/v1/jobs`로 접수하지 않는다.
+
+| 항목 | 계약 |
+|---|---|
+| 인증·접수 | 전용 `X-Noedaeri-API-Key`로 `POST /api/v1/translations` → 202. 웹 `/api/translations`는 승인 세션·CSRF. 플랫폼의 X-Platform-Key와 다른 키 |
+| 입력 | `request_id` 1–128자, `text` 공백 제외 1–4,000자. `source_language`: auto 기본 또는 ko/en/ja/zh/es/fr/de. `target_language`: 같은 7언어 중 필수, auto 불가. 불필요한 필드·제어문자 거부 |
+| 범위 | `project` 기본 default, `environment` 기본 production. 플랫폼 어댑터가 실제 서버 키의 프로젝트/환경 범위를 고정해야 함 |
+| 멱등 | 같은 소유자·project·environment·request_id·동일 내용 재사용. 다른 내용 409. 실패/취소/만료 후 새 실행은 새 request_id. 입력 정리 후 과거 ID를 내용 변경에 재사용하지 않음 |
+| 실행 | pending → 공통 자원 대기 → running → succeeded/failed/cancelled. n8n 응답 제한 60초, 공통 자원 대기 기본 600초. 실행 중 취소는 n8n 중단 보장이 아니며 완료 뒤 결과를 버림 |
+| 결과 | `GET /api/v1/ai/jobs/{id}`의 result. `type:text_translate`, translated_text, 요청한 source_language/target_language, provider/model/usage. source_language=auto는 요청 방식이며 실제 감지 언어를 제공하지 않음. TXT `/api/v1/ai/jobs/{id}/translation.txt` |
+| 제어·사용량 | 기존 `/ai/jobs/{id}/cancel`, `/ai/usage?task_type=text.translate`. `/tasks?service=translation`로 통합 이력 조회 |
+| 보존 | 웹 완료 후 24시간, 플랫폼 기본 7일. 만료 즉시 결과 접근 차단·정기 정리에서 원문/prompt·input·번역문 제거, 작업 메타데이터·사용량 유지 |
+| 오류 | 미연결 503 translation_not_configured. n8n HTTP·통신·시간 초과는 기존 AI 오류. 잘못된/빈 번역문 502 translation_invalid_result. 결과를 성공으로 표시하지 않음 |
+| 완료 알림 상태 | 이 단계는 기존 AI Job 접수·조회 계약이다. 파일 Job의 웹훅/receipt가 AI Job에도 적용된다고 가정하지 않는다. 플랫폼의 완료 수신·결과 반영 경로는 다음 플랫폼 연결 단계에서 구현·검수 |
+
+```json
+{"request_id":"<새 업무 ID>","text":"번역할 문장","source_language":"ko",
+ "target_language":"en","project":"<논리 프로젝트>","environment":"<환경>"}
+```
+
+기존 `POST /api/v1/ai/jobs`에도 `task_type:"text.translate"`, `prompt`에 원문,
+`input:{"source_language":"ko","target_language":"en"}`, `sync:false`로 같은 작업을 등록할 수 있다.
+`sync:true`는 기존 동기 응답을 유지한다. 입력/결과 형식 검증은 두 경로에 동일하게 적용한다.
+
+원문은 기존 n8n 및 외부 AI 공급자에 전송된다. n8n 실행 데이터 저장 금지와 부모 연산 토큰
+분리를 유지한다. 번역 의미·고유명사·숫자를 원문과 대조한다. 번역 품질이나 실제 언어 감지의
+정확도를 보장하지 않는다. 설치·검수는 [번역 실행 기록](https://github.com/shnea/noedaeri/blob/main/docs/TRANSLATION_RUNTIME.md).
 
 ## 영상 자막 · SRT/VTT
 
@@ -315,6 +347,7 @@ Raya·임베딩·벡터 검색 HTTP 노드의 `X-Noedaeri-Compute-Token` 헤더�
 | 목소리 등록·관리 | `/api/v1/voices` | 기본 목소리·참조 음성 등록, 조회·이름 수정·삭제, 요청자 범위 확인 |
 | 음성 생성 | `tts.synthesize` | Qwen3-TTS 1.7B 8bit, Job 큐·WAV·서명 완료 알림·웹 테스트 |
 | PDF 텍스트 추출 | `pdf.extract` | PDFKit 내장 텍스트·페이지별 Vision OCR·TXT/JSON/ZIP·Job·완료 알림·웹 테스트 |
+| 문장 번역 | `text.translate` | n8n 전용 지침·AI Job·번역문/TXT·사용량·웹 테스트. 플랫폼 완료 수신은 별도 연결 |
 | 영상 자막 | `video.subtitles` | STT 재사용·근사 구간 SRT/VTT·TXT/JSON/ZIP·Job·완료 알림·웹 테스트 |
 | 음성 인식 | `stt.transcribe` | SenseVoice INT8·Silero VAD·텍스트/구간 JSON/ZIP·Job·서명 완료 알림·웹 테스트 |
 | 이미지 통합 처리 | `image.package` | JPEG 썸네일·WebP 미리보기·ZIP 생성 가능 |
@@ -524,6 +557,7 @@ n8n 후속 흐름에 넘긴다. 단순 합성에 n8n을 경유하도록 강제�
 
 | `task_type` | 작업 |
 |---|---|
+| `text.translate` | 문장 번역 · 대상 언어 필수 |
 | `blog.tags` | 블로그 태그 |
 | `blog.summary` | 블로그 요약 |
 | `portfolio.search` | 포트폴리오 검색 |

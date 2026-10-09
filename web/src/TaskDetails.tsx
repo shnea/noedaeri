@@ -1,4 +1,15 @@
-import type { Task } from "./api";
+import { translationResultSchema, type Task } from "./api";
+
+const languages = new Map([
+  ["auto", "자동 감지"],
+  ["ko", "한국어"],
+  ["en", "영어"],
+  ["ja", "일본어"],
+  ["zh", "중국어"],
+  ["es", "스페인어"],
+  ["fr", "프랑스어"],
+  ["de", "독일어"],
+]);
 
 export function TaskDetails({
   task,
@@ -10,6 +21,7 @@ export function TaskDetails({
   cancel: () => void;
 }) {
   const data = task.data;
+  const translated = translationResultSchema.safeParse(data.result);
 
   const cancellable =
     (task.source === "ai" && ["queued", "running"].includes(task.status)) ||
@@ -94,6 +106,35 @@ export function TaskDetails({
         <h3>{task.source === "operation" ? "실행 요약" : "결과"}</h3>
         {expired ? (
           <p>결과 보관 기간이 만료되었습니다.</p>
+        ) : translated.success ? (
+          <>
+            <p>
+              {languages.get(translated.data.source_language) ??
+                translated.data.source_language}{" "}
+              →{" "}
+              {languages.get(translated.data.target_language) ??
+                translated.data.target_language}{" "}
+              · {translated.data.provider} · {translated.data.model}
+            </p>
+            <div
+              role="region"
+              tabIndex={0}
+              className="json-result pdf-page-text"
+              aria-label="번역문"
+            >
+              {translated.data.translated_text}
+            </div>
+            <p>
+              자동 번역 결과입니다. 의미·고유명사·숫자를 원문과 대조해 주세요.
+            </p>
+            <a
+              className="button"
+              href={`/api/ai/jobs/${task.id}/translation.txt`}
+              download="translation.txt"
+            >
+              번역문 TXT 다운로드
+            </a>
+          </>
         ) : data.result !== null && data.result !== undefined ? (
           <pre className="json-result">
             {JSON.stringify(data.result, null, 2)}
