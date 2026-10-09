@@ -11,7 +11,7 @@
 | 이미지 파생물 | `POST /api/v1/jobs`, `image.package` | upload, 원본 포맷 확장자 | 썸네일·미리보기·OG·manifest ZIP |
 | 영상 파생물 | 같은 경로, `video.package` | upload, 플랫폼의 해상도 설정 | 썸네일·해상도별 HLS·manifest ZIP |
 | 영상 썸네일 | 같은 경로, `video.thumbnail` | upload, `seconds` | JPEG |
-| TTS | 같은 경로, `tts.synthesize` | text, language·requester_id·선택 voice_id | WAV·합성 정보 ZIP |
+| TTS | 같은 경로, `tts.synthesize` | text, language·requester_id·선택 voice_id | 단일 `speech.wav` + 웹훅·작업 조회 JSON의 합성 정보. ZIP 없음 |
 | 목소리 등록 | `POST /api/v1/voices` | requester_id·project·environment, 프리셋 또는 등록 음성 | 프로필. 복제 음성의 참조 파일은 서비스 NAS에 보존 |
 | STT | `POST /api/v1/jobs`, `stt.transcribe` | upload, language·use_itn | 전사 JSON/TXT ZIP |
 | 이미지 OCR | 같은 경로, `ocr.recognize` | upload, language·language_correction | OCR JSON/TXT ZIP |
@@ -23,6 +23,12 @@
 목소리 목록은 `GET /api/v1/voices`, 상세·이름 수정·삭제는
 `GET/PATCH/DELETE /api/v1/voices/{voice_id}`를 사용한다. 목소리 API의 기본 경로는
 복수형 `/api/v1/voices`이며 `/api/v1/tts/voice`·`/api/v1/tts/voices`·`/api/v1/voice`는 제공하지 않는다.
+
+TTS 성공 웹훅의 `result_path`(`GET /api/v1/jobs/{id}/result`)는 `audio/wav`인
+`speech.wav`의 원본 바이트를 반환한다. ZIP으로 해제하거나 JSON으로 파싱하지 않는다.
+합성 시간·샘플레이트·사용 목소리 등은 웹훅의 `job.result` 또는 작업 조회 JSON의 `result`에서
+읽는다. 음성과 필요한 메타데이터를 플랫폼에 영속 저장한 뒤 기존 파일 Job의 `receipt`를 보낸다.
+TTS에는 `/files/speech.wav` 경로를 사용하지 않는다.
 
 파일 기반 요청은 접수 ID를 저장한 뒤 `PUT /api/v1/jobs/{id}/input`으로 원본 바이트를 보낸다.
 원본은 플랫폼이 보관하고 권한을 확인한다. 결과를 새 플랫폼 원본으로 등록할 필요는 없으며,

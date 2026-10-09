@@ -1,6 +1,6 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 26 · 기준일: 2026-10-10
+문서 버전: 27 · 기준일: 2026-10-10
 
 ## 플랫폼 연결 자료 · AI 완료 알림
 
@@ -550,6 +550,20 @@ MLX 최대 메모리는 프로세스 전체 RSS가 아니다.
 `GET /api/v1/jobs/{job_id}/result`로 WAV를 받고 플랫폼 파일 서비스에 저장한 뒤 기존
 `receipt`로 저장 확인한다. 기존 알림 멱등 처리·다운로드 복구·만료 계약을 그대로 따른다.
 등록·생성도 **작업** 목록과 **서비스**에 표시한다.
+
+TTS의 파일 결과는 **단일 `speech.wav`**이며 ZIP이나 별도 합성 정보 파일을 생성하지 않는다.
+출력은 24kHz·모노·PCM16 WAV다. 긴 텍스트를 내부에서 나누어 합성해도 같은 WAV에 이어서
+기록하므로 플랫폼에 여러 음성 조각을 반환하지 않는다.
+
+| 수령 대상 | 위치·처리 |
+|---|---|
+| 음성 파일 | 성공 웹훅의 `result_path`, 즉 `GET /api/v1/jobs/{job_id}/result`. 인증 헤더 `X-Noedaeri-API-Key` 필요. HTTP 본문은 WAV 바이트, `Content-Type: audio/wav`, 다운로드 파일명은 `speech.wav`. ZIP 해제·JSON 파싱하지 않음 |
+| 합성 메타데이터 | 성공 웹훅의 `job.result` 또는 `GET /api/v1/jobs/{job_id}` 응답의 `result`. 위 길이·샘플레이트·처리 시간·메모리·목소리 정보를 JSON으로 제공 |
+| 저장 확인 | 음성과 필요한 메타데이터를 영속 저장한 뒤 `POST /api/v1/jobs/{job_id}/receipt`에 `{ "event_id":"<성공 웹훅의 event_id>" }` 전송. 수신 확인 뒤 결과 다운로드를 차단하므로 저장 전에 보내지 않음 |
+
+TTS는 통합 ZIP의 manifest 파일 목록을 사용하지 않는다.
+`GET /api/v1/jobs/{job_id}/files/speech.wav`는 지원하지 않으며, WAV 다운로드는 `/result`를 사용한다.
+`speech.wav`는 작업별 다운로드 이름이므로 플랫폼에서는 작업 ID 등으로 저장 대상을 구분한다.
 
 ### 실행·보관·실패
 
@@ -1143,7 +1157,7 @@ if (job.status === 'uploading') {
 | `GET /api/v1/jobs/{id}` | 개별 상태·결과 manifest·`terminal_event_id`·`delivery`·`received_at` |
 | `GET /api/v1/jobs?limit=100` | 최근 플랫폼 작업, 최대 100개. 대량 목록 복구 대신 자체 저장 ID 사용 |
 | `POST /api/v1/jobs/{id}/cancel` | 업로드 대기·큐·실행 취소. 실행 중이면 종료 확인까지 기다림 |
-| `GET /api/v1/jobs/{id}/result` | 단일 JPEG 또는 통합 ZIP |
+| `GET /api/v1/jobs/{id}/result` | 영상 썸네일은 JPEG, TTS는 단일 `speech.wav`(`audio/wav`), 통합 결과는 ZIP |
 | `GET /api/v1/jobs/{id}/files/{name}` | manifest에 기재된 통합 결과 파일, 인증 필요 |
 | `POST /api/v1/jobs/{id}/receipt` | `{ "event_id": "<terminal_event_id>" }`, 저장·등록 완료 확인 |
 | `POST /api/v1/ai/embeddings` | `{ "input": "텍스트" \| ["텍스트1", "텍스트2"], "dimensions": 768 }`, 공통 고성능 임베딩 벡터 생성 |
