@@ -21,6 +21,7 @@ from .media import (
     thumbnail,
     video_package,
 )
+from .ocr import recognize
 from .storage import Storage
 from .stt import transcribe
 from .tts import normalize_reference, synthesize
@@ -52,7 +53,8 @@ def run():
                         "worker_id": str(worker_id),
                         "kinds": ["video.thumbnail", "video.package", "image.package"]
                         + (["tts.synthesize", "tts.voice.register"] if settings.tts_enabled else [])
-                        + (["stt.transcribe"] if settings.stt_enabled else []),
+                        + (["stt.transcribe"] if settings.stt_enabled else [])
+                        + (["ocr.recognize"] if settings.ocr_enabled else []),
                     },
                 )
                 response.raise_for_status()
@@ -223,6 +225,8 @@ def execute_job(settings, storage, job, client, lease, source, output, alive, st
             settings.job_timeout,
             alive,
         )
+    elif job["kind"] == "ocr.recognize":
+        result = recognize(settings, storage, job, alive, stage, reserve)
     elif job["kind"] == "stt.transcribe":
         result = transcribe(settings, storage, job, alive, stage, reserve)
     else:

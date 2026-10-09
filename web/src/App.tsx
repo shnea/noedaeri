@@ -9,6 +9,7 @@ import { TaskDetails } from "./TaskDetails";
 import { EmbeddingRagPanel } from "./EmbeddingRagPanel";
 import { VoicePanel } from "./VoicePanel";
 import { ComputePanel } from "./ComputePanel";
+import { OcrResult } from "./OcrResult";
 import { TranscriptResult } from "./TranscriptResult";
 import {
   jobSchema,
@@ -104,6 +105,8 @@ function Details({
         ["image_processing", "이미지 검사·썸네일·미리보기 생성 중"],
         ["voice_reference_validation", "참조 음성 검증·정규화 중"],
         ["tts_loading_and_synthesis", "목소리 모델 로딩·음성 생성 중"],
+        ["ocr_normalizing", "인식용 이미지 준비 중"],
+        ["ocr_recognizing", "이미지 문자 인식 중"],
         ["stt_probing", "음성 정보·길이 확인 중"],
         ["stt_normalizing", "음성 인식용 입력 변환 중"],
         ["stt_transcribing", "음성 모델 로딩·텍스트 인식 중"],
@@ -357,6 +360,7 @@ function Details({
                 />
               </>
             )}
+            {job.kind === "ocr.recognize" && <OcrResult jobId={job.id} />}
             {job.kind === "stt.transcribe" && (
               <TranscriptResult jobId={job.id} />
             )}
@@ -364,6 +368,7 @@ function Details({
               !videoPackage.success &&
               !imagePackage.success &&
               job.kind !== "stt.transcribe" &&
+              job.kind !== "ocr.recognize" &&
               job.result !== null &&
               job.result !== undefined && (
                 <pre className="json-result">
@@ -373,7 +378,8 @@ function Details({
             <a className="button" href={`/api/jobs/${job.id}/result`} download>
               {imagePackage.success ||
               videoPackage.success ||
-              job.kind === "stt.transcribe"
+              job.kind === "stt.transcribe" ||
+              job.kind === "ocr.recognize"
                 ? "전체 ZIP 다운로드"
                 : "결과 다운로드"}
             </a>
@@ -436,6 +442,10 @@ function NewTask({
     retryJob?.options?.language ?? "auto",
   );
 
+  const [correction, setCorrection] = useState(
+    retryJob?.options?.language_correction ?? true,
+  );
+
   const [useItn, setUseItn] = useState(retryJob?.options?.use_itn ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -487,6 +497,17 @@ function NewTask({
       return;
     }
 
+    if (
+      kind === "ocr.recognize" &&
+      file.size > (service.ocr_limits?.max_input_bytes ?? 32_000_000)
+    ) {
+      setError(
+        "OCR 입력 이미지는 최대 32MB입니다. 크기를 줄인 뒤 다시 선택해 주세요.",
+      );
+
+      return;
+    }
+
     setSubmitted(true);
     setBusy(true);
     setError("");
@@ -501,19 +522,20 @@ function NewTask({
             title,
             idempotency_key: key,
             retry_of: retryJob?.id ?? null,
-            input:
-              kind === "image.package"
-                ? {
-                    type: service.input_type,
-                    extension: file.name.split(".").pop()?.toLowerCase(),
-                  }
-                : { type: service.input_type },
+            input: ["image.package", "ocr.recognize"].includes(kind)
+              ? {
+                  type: service.input_type,
+                  extension: file.name.split(".").pop()?.toLowerCase(),
+                }
+              : { type: service.input_type },
             options:
               kind === "image.package"
                 ? {}
-                : kind === "stt.transcribe"
-                  ? { language, use_itn: useItn }
-                  : { seconds },
+                : kind === "ocr.recognize"
+                  ? { language, language_correction: correction }
+                  : kind === "stt.transcribe"
+                    ? { language, use_itn: useItn }
+                    : { seconds },
           }),
         ),
       );
@@ -567,6 +589,7 @@ function NewTask({
             onChange={(event) => {
               setKind(event.target.value);
               setFile(null);
+              setLanguage("auto");
             }}
           >
             {services
@@ -633,7 +656,7 @@ function NewTask({
         )}
         {service?.input_type === "upload" && (
           <label>
-            {kind === "image.package"
+            {["image.package", "ocr.recognize"].includes(kind)
               ? "입력 이미지"
               : kind === "stt.transcribe"
                 ? "입력 음성·영상"
@@ -644,7 +667,7 @@ function NewTask({
               type="file"
               required
               accept={
-                kind === "image.package"
+                ["image.package", "ocr.recognize"].includes(kind)
                   ? ".png,.jpg,.jpeg,.jfif,.gif,.webp,.bmp,.ico,.tif,.tiff,.heic,.heif,.avif"
                   : kind === "stt.transcribe"
                     ? ".wav,.mp3,.flac,.ogg,.m4a,.mp4,.mov,.webm,.mkv,.aac,.aiff"
@@ -667,6 +690,44 @@ function NewTask({
               onChange={(event) => setSeconds(Number(event.target.value))}
             />
           </label>
+        )}
+        {kind === "ocr.recognize" && (
+          <>
+            <label>
+              인식 언어
+              <select
+                aria-label="인식 언어"
+                disabled={submitted}
+                value={language}
+                onChange={(event) => setLanguage(event.target.value)}
+              >
+                {[
+                  ["auto", "자동 감지 · 한글·영문 우선"],
+                  ["ko", "한국어"],
+                  ["en", "영어"],
+                  ["ja", "일본어"],
+                  ["zh-Hans", "중국어 간체"],
+                  ["zh-Hant", "중국어 번체"],
+                ].map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              언어 보정
+              <select
+                aria-label="언어 보정"
+                disabled={submitted}
+                value={correction ? "on" : "off"}
+                onChange={(event) => setCorrection(event.target.value === "on")}
+              >
+                <option value="on">언어 보정 사용</option>
+                <option value="off">언어 보정 끄기</option>
+              </select>
+            </label>
+          </>
         )}
         {kind === "stt.transcribe" && (
           <>
@@ -711,6 +772,15 @@ function NewTask({
         <p>
           이미지 최대 32MB·4천만 화소. 첫 프레임을 사용하고 원본은 결과에
           포함하지 않습니다.
+        </p>
+      )}
+      {kind === "ocr.recognize" && (
+        <p>
+          이미지 최대 32MB·4천만 화소·가로세로 각 10,000px. 방향을 보정한 첫
+          프레임을 최대 4,096px로 축소해 인식합니다.
+          {service?.ocr_limits &&
+            ` 처리 제한 ${service.ocr_limits.timeout_seconds}초.`}{" "}
+          PDF·표 구조 복원은 지원하지 않습니다. 입력은 작업 종료 후 정리됩니다.
         </p>
       )}
       {kind === "stt.transcribe" && (

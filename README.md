@@ -78,6 +78,25 @@ raya_runtime/.venv/bin/python scripts/install_raya.py
 
 ## 검사
 
+### OCR 설치와 이미지 문자 인식
+
+```sh
+python3 scripts/install_ocr.py
+```
+
+macOS의 Apple Vision revision 3 네이티브 실행 파일을 빌드한다. Xcode Command Line Tools가
+필요하며 별도 모델 다운로드·Docker·상시 OCR 데몬은 없다. 암호화 운영 설정에 `OCR_ENABLED=1`과
+`OCR_TIMEOUT_SECONDS`(기본 120)를 적용하고 API·워커를 재시작한다. 서비스 → OCR 작업 만들기에서
+이미지·언어·언어 보정을 선택한다. 결과는 공통 작업에서 TXT·줄별 JSON·ZIP으로 확인한다.
+웹 테스트 결과는 완료 후 24시간 보관한다. PDF·표 구조 복원은 현재 범위에 포함하지 않는다.
+
+```sh
+RUN_OCR_SMOKE=1 RUN_STT_SMOKE=1 .venv/bin/python scripts/check.py
+node scripts/ui-ocr-check.cjs
+```
+
+[OCR 설치·검수 기록](docs/OCR_RUNTIME.md)과 [연동 지침](docs/SERVICE_INTEGRATION.md)을 참고한다.
+
 ### STT 설치와 음성 인식
 
 ```sh

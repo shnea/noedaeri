@@ -6,6 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .ocr import runtime_ready
+
 
 class UploadInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -37,6 +39,12 @@ class ImageInput(UploadInput):
 
 class ImageOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class RecognitionOptions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    language: Literal["auto", "ko", "en", "ja", "zh-Hans", "zh-Hant"] = "auto"
+    language_correction: bool = True
 
 
 class TranscriptionOptions(BaseModel):
@@ -90,6 +98,14 @@ class Service:
 
 
 SERVICES = {
+    "ocr.recognize": Service(
+        "ocr.recognize",
+        "ocr",
+        "이미지 문자 인식 · 텍스트 + 줄별 위치",
+        "upload",
+        RecognitionOptions,
+        input_model=ImageInput,
+    ),
     "stt.transcribe": Service(
         "stt.transcribe",
         "stt",
@@ -167,7 +183,22 @@ def service_catalog(settings):
             "interface": "tts" if item.service == "tts" else "media",
             "available": settings.tts_enabled
             if item.service == "tts"
-            else (settings.stt_enabled if item.service == "stt" else True),
+            else (
+                settings.stt_enabled
+                if item.service == "stt"
+                else settings.ocr_enabled and runtime_ready()
+                if item.service == "ocr"
+                else True
+            ),
+            "ocr_limits": {
+                "max_input_bytes": 32_000_000,
+                "max_pixels": 40_000_000,
+                "max_dimension": 10000,
+                "processing_dimension": 4096,
+                "timeout_seconds": settings.ocr_timeout,
+            }
+            if item.service == "ocr"
+            else None,
             "limits": {
                 "max_duration_seconds": settings.stt_max_duration,
                 "timeout_seconds": settings.stt_timeout,

@@ -26,6 +26,7 @@ export const jobSchema = z.object({
       seconds: z.number().optional(),
       language: z.string().optional(),
       use_itn: z.boolean().optional(),
+      language_correction: z.boolean().optional(),
     })
     .optional(),
   id: z.string(),
@@ -48,6 +49,16 @@ export const jobSchema = z.object({
 });
 
 export const serviceSchema = z.object({
+  ocr_limits: z
+    .object({
+      max_input_bytes: z.number(),
+      max_pixels: z.number(),
+      max_dimension: z.number(),
+      processing_dimension: z.number(),
+      timeout_seconds: z.number(),
+    })
+    .nullable()
+    .optional(),
   limits: z
     .object({
       max_duration_seconds: z.number(),
@@ -331,6 +342,12 @@ const messages = new Map(
     unsupported_media: "지원 형식과 입력 길이를 확인해 주세요.",
     tts_not_configured:
       "TTS 설치와 연결 설정이 필요합니다. 관리자에게 확인해 주세요.",
+    ocr_not_configured:
+      "OCR 엔진이 준비되지 않았습니다. 관리자에게 설치 상태를 확인해 주세요.",
+    ocr_recognition_failed:
+      "이미지 문자를 인식하지 못했습니다. 이미지 상태를 확인한 뒤 다시 시도해 주세요.",
+    ocr_result_too_large:
+      "인식 결과가 한도를 넘었습니다. 이미지를 나눠서 다시 요청해 주세요.",
     stt_not_configured:
       "STT 엔진 설치·활성화가 필요합니다. 관리자에게 확인해 주세요.",
     stt_transcription_failed:

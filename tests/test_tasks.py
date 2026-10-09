@@ -72,7 +72,8 @@ def test_task_access_gates_and_platform_scope(app):
     assert any(row["origin"] == "platform" for row in client.get("/api/tasks").json())
 
 
-def test_catalog_contains_every_implemented_service_and_configuration_state(app):
+def test_catalog_contains_every_implemented_service_and_configuration_state(app, monkeypatch):
+    monkeypatch.setattr("noedaeri.services.runtime_ready", lambda: True)
     client, _ = login(app)
     rows = {row["kind"]: row for row in client.get("/api/services").json()}
     assert {
@@ -82,6 +83,7 @@ def test_catalog_contains_every_implemented_service_and_configuration_state(app)
         "video.package",
         "video.thumbnail",
         "stt.transcribe",
+        "ocr.recognize",
         "ai.workflow",
         "raya.route",
         "embedding.encode",
@@ -98,6 +100,7 @@ def test_catalog_contains_every_implemented_service_and_configuration_state(app)
         raya_enabled=True,
         tts_enabled=True,
         stt_enabled=True,
+        ocr_enabled=True,
     )
     rows = {row["kind"]: row for row in client.get("/api/services").json()}
     assert all(row["available"] for row in rows.values())

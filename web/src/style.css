@@ -1067,3 +1067,19 @@ main {
 .compute-panel button {
   margin: 4px 8px 4px 0;
 }
+.ocr-lines {
+  max-height: 24rem;
+  overflow-y: auto;
+  padding-inline-start: 28px;
+  scrollbar-color: var(--muted) var(--selected);
+}
+.ocr-lines li {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.ocr-lines small {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}

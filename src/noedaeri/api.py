@@ -28,6 +28,7 @@ from .db import Database
 from .embeddings import install_embedding_routes
 from .execution import execution_lock
 from .integration import PLATFORM_OWNER, Webhooks
+from .ocr import runtime_ready
 from .queue import Queue
 from .raya import Raya, install_raya_routes
 from .services import SERVICES, service_catalog
@@ -73,6 +74,9 @@ class Finish(Lease):
             "voice_sample_missing",
             "voice_storage_unavailable",
             "compute_wait_timeout",
+            "ocr_not_configured",
+            "ocr_recognition_failed",
+            "ocr_result_too_large",
             "stt_not_configured",
             "stt_transcription_failed",
             "stt_duration_exceeded",
@@ -441,6 +445,10 @@ def create_app(settings: Settings | None = None):
             raise HTTPException(422, "voice_registration_endpoint_required")
         if service.service == "tts" and not getattr(app.state, "settings", settings).tts_enabled:
             raise HTTPException(503, "tts_not_configured")
+        if service.service == "ocr" and (
+            not getattr(app.state, "settings", settings).ocr_enabled or not runtime_ready()
+        ):
+            raise HTTPException(503, "ocr_not_configured")
         if service.service == "stt" and not getattr(app.state, "settings", settings).stt_enabled:
             raise HTTPException(503, "stt_not_configured")
         try:
@@ -565,6 +573,8 @@ def create_app(settings: Settings | None = None):
                         limit = (
                             min(settings.upload_limit, SAMPLE_LIMIT)
                             if job["kind"] == "tts.voice.register"
+                            else min(settings.upload_limit, 32_000_000)
+                            if job["kind"] == "ocr.recognize"
                             else settings.upload_limit
                         )
                         if size > limit:
@@ -608,7 +618,7 @@ def create_app(settings: Settings | None = None):
         ):
             raise HTTPException(410, "result_unavailable")
         service = SERVICES[job["kind"]]
-        if job["kind"] in {"video.package", "image.package", "stt.transcribe"}:
+        if job["kind"] in {"video.package", "image.package", "stt.transcribe", "ocr.recognize"}:
             manifest = job["result"] or {}
             name = (
                 filename
@@ -616,6 +626,7 @@ def create_app(settings: Settings | None = None):
                     "image.package": "image.zip",
                     "video.package": "video.zip",
                     "stt.transcribe": "transcript.zip",
+                    "ocr.recognize": "text.zip",
                 }[job["kind"]]
             )
             if name not in manifest.get("files", []):
@@ -755,7 +766,7 @@ def create_app(settings: Settings | None = None):
             if not job:
                 raise HTTPException(404, "job_not_found")
             service = SERVICES[job["kind"]]
-            if job["kind"] in {"video.package", "image.package", "stt.transcribe"}:
+            if job["kind"] in {"video.package", "image.package", "stt.transcribe", "ocr.recognize"}:
                 if not isinstance(result_data, dict) or result_data.get("type") != job[
                     "kind"
                 ].replace(".", "_"):
@@ -766,6 +777,8 @@ def create_app(settings: Settings | None = None):
                     if job["kind"] == "image.package"
                     else {"transcript.json", "transcript.txt", "transcript.zip"}
                     if job["kind"] == "stt.transcribe"
+                    else {"text.json", "text.txt", "text.zip"}
+                    if job["kind"] == "ocr.recognize"
                     else {"master.m3u8", "thumbnail.jpg", "video.zip"}
                 )
                 if (

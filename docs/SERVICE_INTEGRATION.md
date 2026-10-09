@@ -1,6 +1,77 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 20 · 기준일: 2026-10-09
+문서 버전: 21 · 기준일: 2026-10-09
+
+## OCR · 이미지 문자 인식
+
+`ocr.recognize`는 macOS Apple Vision revision 3의 정확도 우선 인식을 사용한다.
+별도 모델 다운로드·상시 OCR 데몬·n8n 단계 없이 작업별 네이티브 프로세스로 실행하고 종료한다.
+기존 플랫폼 로그인·관리자 승인·전용 API 키를 재사용하며 OCR 전용 인증을 만들지 않는다.
+공통 Job·최상위 연산 1개·취소·점유 갱신·서명 완료 웹훅·결과 수령 확인을 사용한다.
+플랫폼의 OCR 요청·결과 저장 어댑터는 추후 플랫폼에서 반영한다.
+
+| 항목 | 계약 |
+|---|---|
+| 접수·인증 | 플랫폼 서버 `X-Noedaeri-API-Key`로 `POST /api/v1/jobs`. 웹은 승인 세션·CSRF |
+| 입력 | `input: {"type":"upload","extension":"png"}`. 접수 후 `PUT /api/v1/jobs/{id}/input`에 `application/octet-stream` 바이너리 전송 |
+| 형식 | PNG, JPEG(jpg/jpeg/jfif), GIF, WebP, BMP, ICO, TIFF(tif/tiff), HEIC/HEIF, AVIF. 선언 확장자와 실제 포맷 일치 필수. 애니메이션·다중 페이지는 첫 프레임만. PDF 미지원 |
+| 옵션 | `language`: `auto`(기본)/`ko`/`en`/`ja`/`zh-Hans`/`zh-Hant`. `language_correction`: boolean(기본 true). 다른 필드 422 |
+| 언어 선택 | `auto`는 자동 감지하며 한글·영문을 우선한다. 한국어·일본어·중국어 선택 시 해당 언어와 영어를 함께 설정. 영어 선택 시 영어만 설정. 요청 언어가 실제 감지 언어 필드는 아님 |
+| 입력 한도 | 공통 업로드 한도와 32,000,000바이트 중 작은 값. 초과 업로드 413 `upload_too_large`. 가로·세로 각 10,000px·총 40,000,000화소 이하. 실제 포맷·화소 초과는 실행 실패 `unsupported_media` |
+| 전처리 | EXIF 방향·색상 보정, 투명 배경은 흰색으로 합성. 최대 가로·세로 4,096px로 비율 유지 축소. 원본 EXIF·ICC·원본 파일은 결과에서 제외 |
+| 실행 설정 | 암호화 env `OCR_ENABLED=1`, `OCR_TIMEOUT_SECONDS` 기본 120초·허용 30–600초. 이미지 준비·인식·ZIP 전체 시간. 공통 자원 대기 기본 600초는 별도. `/services`의 `ocr_limits`와 `available`로 현재 상태 확인 |
+| 공간·출력 한도 | 중간 PNG와 결과에 80MiB 공간 예약. JSON 최대 4MiB·10,000줄. TXT·JSON·ZIP은 공통 임시 용량에 포함 |
+| 결과 | `/api/v1/jobs/{id}/result`는 `text.zip`(TXT + JSON). `/files/text.txt`, `/files/text.json`. 원본·중간 PNG는 없음 |
+| 완료·수령 | 기존 `job.succeeded`/`job.failed`/`job.cancelled` 서명 웹훅. `result_path` 또는 `job.result.files`로 다운로드·저장 후 `receipt`. 반복 조회로 완료를 기다리지 않음 |
+| 멱등·복구 | 같은 UUID·kind·title·input·options로만 재접수, 변경 409. 다운로드 실패는 TTL 안에서 같은 결과 경로 재시도. 종료 불확실 작업 자동 중복 실행 금지 |
+| 보존 | 웹 테스트 완료 후 24시간. 플랫폼 결과는 수령 확인 또는 플랫폼 TTL(기본 7일). 원본·중간 파일은 종료 후 정리. 결과 만료 후에도 작업 이력 유지 |
+| 실패 | 비활성·엔진 미설치/소스 불일치 접수 503 `ocr_not_configured`. 실행 `ocr_recognition_failed`, 출력 초과 `ocr_result_too_large`, 시간 초과 `processing_timeout`, 자원 대기 초과 `compute_wait_timeout`. 빈 이미지·문자 미검출은 성공·빈 텍스트/줄 |
+| 웹 | 서비스 → OCR 작업 만들기 → 공통 작업에서 상태·취소·결과·삭제 예정 시각. 언어·보정 선택, 50줄 단위 결과·신뢰도·TXT/JSON/ZIP 다운로드 |
+
+```json
+{
+  "kind": "ocr.recognize",
+  "title": "이미지 문자 인식",
+  "idempotency_key": "<요청 UUID>",
+  "input": {"type": "upload", "extension": "png"},
+  "options": {"language": "auto", "language_correction": true}
+}
+```
+
+접수 응답은 기존 Job(`id`, `status: "uploading"` 등)이다. 완료 `job.result`는
+`type: "ocr_recognize"`, `engine: "Apple Vision"`, `revision: 3`, 요청 옵션,
+`source`, `line_count`, `files`, `elapsed_seconds`, `peak_memory_bytes`를 담는다.
+전체 인식 텍스트는 DB 이력·웹훅·프로세스 로그에 넣지 않고 결과 파일로만 전달한다.
+`text.json`의 형식은 다음과 같다(아래 문구·좌표는 설명용).
+
+```json
+{
+  "engine": "Apple Vision",
+  "revision": 3,
+  "language": "auto",
+  "recognition_languages": ["ko-KR", "en-US"],
+  "language_correction": true,
+  "coordinate_system": "normalized_top_left",
+  "line_order": "vision_observations",
+  "source": {
+    "format": "PNG", "media_type": "image/png", "frame_policy": "first",
+    "original": {"width": 1200, "height": 360}, "width": 1200, "height": 360
+  },
+  "text": "<인식한 텍스트>",
+  "lines": [{
+    "text": "<인식한 줄>", "confidence": 0.97,
+    "bounding_box": {"left": 0.04, "top": 0.17, "width": 0.5, "height": 0.12}
+  }]
+}
+```
+
+`source.original`은 방향 보정 후 원본 크기, `width`·`height`는 인식용 축소 크기다.
+좌표는 방향 보정된 이미지의 왼쪽 위 기준 0–1 비율이다. 픽셀 좌표가 아니다.
+줄 순서는 Vision 관측 순서이며 다단 문서·표의 읽기 순서, 행·열, 서식·수식·필기 인식을
+보장하지 않는다. 신뢰도는 정확도 보증이 아니다. 저해상도·축소된 작은 글자는 원문과 대조한다.
+설치·실제 검수 범위는 [OCR 실행 기록](https://github.com/shnea/noedaeri/blob/main/docs/OCR_RUNTIME.md)을 따른다.
+Apple API 근거: [문자 인식 요청](https://developer.apple.com/documentation/vision/vnrecognizetextrequest),
+[언어 설정](https://developer.apple.com/documentation/vision/vnrecognizetextrequest/recognitionlanguages).
 
 ## STT · 음성 인식
 
@@ -84,7 +155,7 @@
 
 ## 공통 연산 자원 배정 · 2026-10-09
 
-파일·TTS·STT·Raya·임베딩·벡터 검색·문서 색인·n8n AI 워크플로가 공통 자원 예약을 거칩니다.
+파일·TTS·STT·OCR·Raya·임베딩·벡터 검색·문서 색인·n8n AI 워크플로가 공통 자원 예약을 거칩니다.
 현재 최상위 연산 동시 실행 수는 **1**입니다. DB 작업 종류별 접수 API와 기존 동기 응답은
 유지하고, 자원 배정 준비가 된 예약을 등록 순서로 실행합니다. 파일 업로드·결과 다운로드·
 상태 조회·웹훅 전송은 연산 슬롯을 점유하지 않습니다. n8n 안에서 뇌대리 밖으로 직접 보낸

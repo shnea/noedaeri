@@ -28,7 +28,7 @@ FORMATS = {
 }
 
 
-def convert(source: Path, folder: Path, extension: str):
+def load_frame(source: Path, extension: str):
     register_heif_opener(thumbnails=False, decode_threads=1)
     Image.MAX_IMAGE_PIXELS = 40_000_000
     warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -59,6 +59,28 @@ def convert(source: Path, folder: Path, extension: str):
             frame.putalpha(alpha)
         frame = frame.convert("RGBA")
         frame.info.clear()
+    return frame, expected, mime
+
+
+def prepare_ocr(source: Path, output: Path, extension: str):
+    frame, expected, mime = load_frame(source, extension)
+    original = {"width": frame.width, "height": frame.height}
+    frame.thumbnail((4096, 4096), Image.Resampling.LANCZOS)
+    opaque = Image.new("RGB", frame.size, "white")
+    opaque.paste(frame, mask=frame.getchannel("A"))
+    opaque.save(output, "PNG")
+    return {
+        "format": expected,
+        "media_type": mime,
+        "frame_policy": "first",
+        "original": original,
+        "width": frame.width,
+        "height": frame.height,
+    }
+
+
+def convert(source: Path, folder: Path, extension: str):
+    frame, expected, mime = load_frame(source, extension)
     folder.mkdir(parents=True, exist_ok=False, mode=0o700)
     preview = frame.copy()
     preview.thumbnail((1600, 1600), Image.Resampling.LANCZOS)
@@ -104,9 +126,15 @@ def convert(source: Path, folder: Path, extension: str):
 
 if __name__ == "__main__":
     resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
-    resource.setrlimit(resource.RLIMIT_FSIZE, (8_000_000, 8_000_000))
+    ocr = sys.argv[1] == "--ocr"
+    limit = 64 * 1024**2 if ocr else 8_000_000
+    resource.setrlimit(resource.RLIMIT_FSIZE, (limit, limit))
     try:
-        result = convert(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])
+        result = (
+            prepare_ocr(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
+            if ocr
+            else convert(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])
+        )
     except Exception:
         # Codec diagnostics and original metadata must not escape into process logs.
         result = {"error": "unsupported_media"}

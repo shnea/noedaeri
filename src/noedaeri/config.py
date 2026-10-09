@@ -40,6 +40,8 @@ class Settings:
     n8n_ai_webhook_url: str = ""
     n8n_compute_context_ready: bool = False
     tts_enabled: bool = False
+    ocr_enabled: bool = False
+    ocr_timeout: int = 120
     stt_enabled: bool = False
     stt_timeout: int = 900
     stt_max_duration: int = 3600
@@ -63,6 +65,8 @@ class Settings:
             or os.environ.get("SERVICE_STORAGE_MOUNT_ROOT")
             else None,
             tts_enabled=os.environ.get("TTS_ENABLED", "0") == "1",
+            ocr_enabled=os.environ.get("OCR_ENABLED", "0") == "1",
+            ocr_timeout=int(os.environ.get("OCR_TIMEOUT_SECONDS", "120")),
             stt_enabled=os.environ.get("STT_ENABLED", "0") == "1",
             stt_timeout=int(os.environ.get("STT_TIMEOUT_SECONDS", "900")),
             stt_max_duration=int(os.environ.get("STT_MAX_DURATION_SECONDS", "3600")),
@@ -154,6 +158,8 @@ class Settings:
             raise ValueError("Invalid Raya execution policy")
         if settings.upload_limit <= 0 or settings.storage_limit <= settings.upload_limit:
             raise ValueError("Storage capacity must exceed the positive upload limit")
+        if not 30 <= settings.ocr_timeout <= 600:
+            raise ValueError("OCR timeout must be between 30 and 600 seconds")
         if settings.integration_key and len(settings.integration_key) < 32:
             raise ValueError("Platform API key must contain at least 32 characters")
         if settings.webhook_secret and len(settings.webhook_secret) < 32:
