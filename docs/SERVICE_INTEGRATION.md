@@ -1,6 +1,39 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 22 · 기준일: 2026-10-10
+문서 버전: 23 · 기준일: 2026-10-10
+
+## PDF 텍스트 추출 · 스캔 OCR
+
+`pdf.extract`는 macOS PDFKit과 기존 Apple Vision revision 3을 사용한다. 공통 Job·연산 슬롯·
+취소·서명 완료 웹훅·결과 수령 확인을 재사용하며 별도 PDF 데몬·n8n 단계는 없다.
+
+| 항목 | 계약 |
+|---|---|
+| 접수·입력 | `POST /api/v1/jobs`, `kind:"pdf.extract"`, `input:{"type":"upload"}`. 기존 전용 키 인증. 이어서 `/jobs/{id}/input`에 바이너리 PUT. 웹은 승인 세션·CSRF |
+| 옵션 | `mode`: `auto`(기본)/`ocr`/`text`, 기존 OCR의 `language`·`language_correction`. 다른 필드 422 |
+| 방식 | `auto`: 페이지의 내장 텍스트가 비어 있으면 OCR, 있으면 해당 텍스트 추출. 텍스트와 이미지가 함께 있는 페이지의 이미지 속 글자는 자동 모드에서 추가 인식하지 않음. `ocr`: 모든 페이지를 렌더링해 인식. `text`: 내장 텍스트만 추출, 스캔 페이지는 빈 결과 |
+| 입력 한도 | 기본 200,000,000바이트, 공통 업로드와 `PDF_MAX_INPUT_BYTES` 중 작은 값. 1바이트–5GiB로 설정 가능. 초과 PUT 413 `upload_too_large` |
+| 페이지·시간 | 기본 최대 100페이지·전체 900초. `PDF_MAX_PAGES` 1–500, `PDF_TIMEOUT_SECONDS` 30–7,200. 문서 전체 페이지 수 초과 시 일부 성공 없이 실패. 공통 자원 대기 한도는 별도 |
+| 실행 설정 | `OCR_ENABLED=1`, `scripts/install_ocr.py`로 새 소스 재빌드. 설정은 암호화 env, API·워커 재시작 후 적용. `/services`의 `pdf_limits`·`available` 확인 |
+| 처리·진행 | 한 페이지씩 최대 144dpi·각 변 4,096px로 렌더링. `pdf_reading` → `pdf_pages_<완료수>_of_<전체수>` → `packaging`. 페이지 완료 수는 실제 처리 결과이며 임의 진행률 아님 |
+| 결과 | `document.zip`(TXT + JSON). `/files/document.txt`, `/files/document.json`. JSON은 `page_count`, 전체 `text`, `pages:[{page,method,text,lines}]`. 내장 텍스트는 `method:"text"`·`lines:[]`; OCR은 `method:"ocr"`·줄별 신뢰도/정규화 좌표. 원본·페이지 이미지는 반환하지 않음 |
+| 실패 | 암호화/잠금 PDF `pdf_encrypted`, 페이지 초과 `pdf_page_limit_exceeded`, 인식 실패 `ocr_recognition_failed`, 결과 4MiB/10,000 OCR줄 한도 초과 `ocr_result_too_large`, 전체 시간 초과 `processing_timeout`. 손상·PDF 헤더 불일치 거부 |
+| 보존·복구 | 웹 완료 후 24시간. 플랫폼은 receipt 또는 TTL(기본 7일). 원본·요청/진행 임시 파일 정리, 이력 유지. 기존 멱등 접수·완료 웹훅 중복 처리·다운로드 재시도·저장 후 receipt 계약 적용 |
+| 웹 | 서비스 목록 → PDF 작업 → 공통 작업. 추출 방식·언어 선택, 페이지 완료 상태·취소, 페이지별 텍스트·다운로드·만료 표시 |
+
+표·서식·수식·필기·다단 읽기 순서 복원과 암호 입력은 제공하지 않는다. 내장 텍스트의 인코딩 오류·
+잘못된 OCR 레이어가 있으면 모든 페이지 OCR 옵션으로 대조한다. 텍스트·PDF 내 스크립트를 실행하지 않는다.
+플랫폼의 기존 원본 PDF 뷰어는 유지하며 이 API는 텍스트 추출용이다.
+
+```json
+{"kind":"pdf.extract","title":"문서 텍스트 추출","idempotency_key":"<새 UUID>",
+ "input":{"type":"upload"},"options":{"mode":"auto","language":"ko"}}
+```
+
+완료 메타데이터는 `type:"pdf_extract"`, `page_count`, `text_pages`, `ocr_pages`, `files`,
+실행 시간·최대 메모리다. 전체 텍스트는 DB 이력·로그·완료 웹훅에 포함하지 않는다.
+Apple API 근거: [PDFDocument](https://developer.apple.com/documentation/pdfkit/pdfdocument),
+[페이지 텍스트](https://developer.apple.com/documentation/pdfkit/pdfpage/string).
 
 ## OCR · 이미지 문자 인식
 
@@ -255,6 +288,7 @@ Raya·임베딩·벡터 검색 HTTP 노드의 `X-Noedaeri-Compute-Token` 헤더�
 |---|---|---|
 | 목소리 등록·관리 | `/api/v1/voices` | 기본 목소리·참조 음성 등록, 조회·이름 수정·삭제, 요청자 범위 확인 |
 | 음성 생성 | `tts.synthesize` | Qwen3-TTS 1.7B 8bit, Job 큐·WAV·서명 완료 알림·웹 테스트 |
+| PDF 텍스트 추출 | `pdf.extract` | PDFKit 내장 텍스트·페이지별 Vision OCR·TXT/JSON/ZIP·Job·완료 알림·웹 테스트 |
 | 음성 인식 | `stt.transcribe` | SenseVoice INT8·Silero VAD·텍스트/구간 JSON/ZIP·Job·서명 완료 알림·웹 테스트 |
 | 이미지 통합 처리 | `image.package` | JPEG 썸네일·WebP 미리보기·ZIP 생성 가능 |
 | 영상 썸네일 | `video.thumbnail` | 웹 요청·결과 다운로드 가능 |
@@ -1102,7 +1136,7 @@ JSON 재직렬화 후 서명을 계산하지 않습니다. 서명을 constant-ti
 
 ## 대용량 입력과 플랫폼 복구 책임
 
-공통 작업 입력 업로드 한도는 **5GiB (5,368,709,120바이트)**입니다. 영상·첨부 원본을 플랫폼이 저장하는 한도도 플랫폼에서 같은 값으로 설정해야 합니다. 뇌대리는 일반 첨부 저장소가 아니며 등록된 연산 종류만 처리합니다. 파일 입력 작업에는 이미지·영상·목소리 등록·STT·OCR이 있으며 종류별 검증 한도를 적용합니다. 이미지·OCR 입력은 기본 200MB이며 `IMAGE_MAX_INPUT_BYTES`로 조정합니다. API·워커 재시작 후 웹도 서비스 목록의 실효 한도를 표시합니다. 파일 크기 한도를 높여도 4천만 화소·각 변 10,000px 및 처리 시간 제한은 유지합니다. 업로드 허용이 모든 종류의 변환 성공을 의미하지 않습니다.
+공통 작업 입력 업로드 한도는 **5GiB (5,368,709,120바이트)**입니다. 영상·첨부 원본을 플랫폼이 저장하는 한도도 플랫폼에서 같은 값으로 설정해야 합니다. 뇌대리는 일반 첨부 저장소가 아니며 등록된 연산 종류만 처리합니다. 파일 입력 작업에는 이미지·영상·목소리 등록·STT·OCR·PDF가 있으며 종류별 검증 한도를 적용합니다. 이미지·OCR 입력은 기본 200MB이며 `IMAGE_MAX_INPUT_BYTES`로 조정합니다. API·워커 재시작 후 웹도 서비스 목록의 실효 한도를 표시합니다. 파일 크기 한도를 높여도 4천만 화소·각 변 10,000px 및 처리 시간 제한은 유지합니다. 업로드 허용이 모든 종류의 변환 성공을 의미하지 않습니다.
 
 기본 임시 총량은 20GiB이고 UPLOAD_MAX_BYTES/STORAGE_MAX_BYTES로 설정합니다. 실제 디스크 여유·입력 및 출력 예약 검사를 통과해야 접수합니다. 로컬 nginx 한도도 같은 설정을 사용합니다. 외부 Nginx Proxy Manager·플랫폼 업로드 프록시에는 5GiB 이상의 client_max_body_size와 대용량 전송에 맞는 제한시간을 별도로 적용해야 합니다. 원본 전송의 바이트 위치부터 재개는 지원하지 않습니다.
 

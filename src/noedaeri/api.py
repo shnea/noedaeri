@@ -77,6 +77,8 @@ class Finish(Lease):
             "ocr_not_configured",
             "ocr_recognition_failed",
             "ocr_result_too_large",
+            "pdf_encrypted",
+            "pdf_page_limit_exceeded",
             "stt_not_configured",
             "stt_transcription_failed",
             "stt_duration_exceeded",
@@ -445,7 +447,7 @@ def create_app(settings: Settings | None = None):
             raise HTTPException(422, "voice_registration_endpoint_required")
         if service.service == "tts" and not getattr(app.state, "settings", settings).tts_enabled:
             raise HTTPException(503, "tts_not_configured")
-        if service.service == "ocr" and (
+        if service.service in {"ocr", "pdf"} and (
             not getattr(app.state, "settings", settings).ocr_enabled or not runtime_ready()
         ):
             raise HTTPException(503, "ocr_not_configured")
@@ -518,6 +520,8 @@ def create_app(settings: Settings | None = None):
                 incoming = min(settings.upload_limit, 32_000_000)
             if service.service in {"image", "ocr"}:
                 incoming = min(settings.upload_limit, settings.image_input_limit)
+            if service.service == "pdf":
+                incoming = min(settings.upload_limit, settings.pdf_input_limit)
             if not storage.available(reserved + incoming):
                 raise HTTPException(507, "storage_capacity_exceeded")
             job = conn.execute(
@@ -577,6 +581,8 @@ def create_app(settings: Settings | None = None):
                             if job["kind"] == "tts.voice.register"
                             else min(settings.upload_limit, settings.image_input_limit)
                             if job["kind"] in {"ocr.recognize", "image.package"}
+                            else min(settings.upload_limit, settings.pdf_input_limit)
+                            if job["kind"] == "pdf.extract"
                             else settings.upload_limit
                         )
                         if size > limit:
@@ -620,7 +626,13 @@ def create_app(settings: Settings | None = None):
         ):
             raise HTTPException(410, "result_unavailable")
         service = SERVICES[job["kind"]]
-        if job["kind"] in {"video.package", "image.package", "stt.transcribe", "ocr.recognize"}:
+        if job["kind"] in {
+            "video.package",
+            "image.package",
+            "stt.transcribe",
+            "ocr.recognize",
+            "pdf.extract",
+        }:
             manifest = job["result"] or {}
             name = (
                 filename
@@ -629,6 +641,7 @@ def create_app(settings: Settings | None = None):
                     "video.package": "video.zip",
                     "stt.transcribe": "transcript.zip",
                     "ocr.recognize": "text.zip",
+                    "pdf.extract": "document.zip",
                 }[job["kind"]]
             )
             if name not in manifest.get("files", []):
@@ -768,7 +781,13 @@ def create_app(settings: Settings | None = None):
             if not job:
                 raise HTTPException(404, "job_not_found")
             service = SERVICES[job["kind"]]
-            if job["kind"] in {"video.package", "image.package", "stt.transcribe", "ocr.recognize"}:
+            if job["kind"] in {
+                "video.package",
+                "image.package",
+                "stt.transcribe",
+                "ocr.recognize",
+                "pdf.extract",
+            }:
                 if not isinstance(result_data, dict) or result_data.get("type") != job[
                     "kind"
                 ].replace(".", "_"):
@@ -779,6 +798,8 @@ def create_app(settings: Settings | None = None):
                     if job["kind"] == "image.package"
                     else {"transcript.json", "transcript.txt", "transcript.zip"}
                     if job["kind"] == "stt.transcribe"
+                    else {"document.json", "document.txt", "document.zip"}
+                    if job["kind"] == "pdf.extract"
                     else {"text.json", "text.txt", "text.zip"}
                     if job["kind"] == "ocr.recognize"
                     else {"master.m3u8", "thumbnail.jpg", "video.zip"}

@@ -90,7 +90,9 @@ macOS의 Apple Vision revision 3 네이티브 실행 파일을 빌드한다. Xco
 이미지·언어·언어 보정을 선택한다. 결과는 공통 작업에서 TXT·줄별 JSON·ZIP으로 확인한다.
 이미지 변환·OCR 입력은 기본 200MB다. 암호화 env의 `IMAGE_MAX_INPUT_BYTES`로 조정하며 공통 업로드
 한도와 작은 값을 적용한다. 변경 후 API·워커를 재시작하면 웹에 반영된다. 4천만 화소·각 축 10,000px
-제한은 별도 유지한다. 웹 테스트 결과는 완료 후 24시간 보관한다. PDF·표 구조 복원은 현재 범위에 포함하지 않는다.
+제한은 별도 유지한다. 웹 테스트 결과는 완료 후 24시간 보관한다. PDF는 같은 엔진으로 `pdf.extract`를 실행한다. 기본 200MB·100페이지·900초이며 `PDF_MAX_INPUT_BYTES`,
+`PDF_MAX_PAGES`, `PDF_TIMEOUT_SECONDS`로 조정한다. 자동·전체 OCR·내장 텍스트 모드를 제공한다.
+표 구조 복원·암호화 PDF는 지원하지 않는다.
 
 ```sh
 RUN_OCR_SMOKE=1 RUN_STT_SMOKE=1 .venv/bin/python scripts/check.py

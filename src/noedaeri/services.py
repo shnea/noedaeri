@@ -47,6 +47,10 @@ class RecognitionOptions(BaseModel):
     language_correction: bool = True
 
 
+class PDFOptions(RecognitionOptions):
+    mode: Literal["auto", "ocr", "text"] = "auto"
+
+
 class TranscriptionOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     language: Literal["auto", "ko", "en", "ja", "zh", "yue"] = "auto"
@@ -98,6 +102,13 @@ class Service:
 
 
 SERVICES = {
+    "pdf.extract": Service(
+        "pdf.extract",
+        "pdf",
+        "PDF 텍스트 추출 · 스캔 페이지 OCR",
+        "upload",
+        PDFOptions,
+    ),
     "ocr.recognize": Service(
         "ocr.recognize",
         "ocr",
@@ -187,9 +198,17 @@ def service_catalog(settings):
                 settings.stt_enabled
                 if item.service == "stt"
                 else settings.ocr_enabled and runtime_ready()
-                if item.service == "ocr"
+                if item.service in {"ocr", "pdf"}
                 else True
             ),
+            "pdf_limits": {
+                "max_input_bytes": min(settings.upload_limit, settings.pdf_input_limit),
+                "max_pages": settings.pdf_max_pages,
+                "timeout_seconds": settings.pdf_timeout,
+                "processing_dimension": 4096,
+            }
+            if item.service == "pdf"
+            else None,
             "image_limits": {
                 "max_input_bytes": min(settings.upload_limit, settings.image_input_limit),
                 "max_pixels": 40_000_000,

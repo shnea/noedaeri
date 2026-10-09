@@ -59,7 +59,8 @@ button:disabled {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+.pdf-page-text:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }

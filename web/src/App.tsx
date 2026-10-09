@@ -9,6 +9,7 @@ import { TaskDetails } from "./TaskDetails";
 import { EmbeddingRagPanel } from "./EmbeddingRagPanel";
 import { VoicePanel } from "./VoicePanel";
 import { ComputePanel } from "./ComputePanel";
+import { PdfResult } from "./PdfResult";
 import { OcrResult } from "./OcrResult";
 import { TranscriptResult } from "./TranscriptResult";
 import {
@@ -91,32 +92,40 @@ function Details({
     })
     .safeParse(job.result);
 
-  const stageLabel = job.stage.startsWith("encoding_")
-    ? `${job.stage.slice(9)} 영상 변환 중`
-    : new Map([
-        ["thumbnail", "썸네일 생성 중"],
-        ["probing", "영상 정보 분석 중"],
-        ["reserving", "결과 저장 공간 예약 중"],
-        ["cpu_fallback", "하드웨어 가속을 사용할 수 없어 CPU로 전환 중입니다."],
-        [
-          "waiting_hardware_encoder",
-          "다른 작업이 하드웨어 인코더를 사용 중입니다. 종료 후 시작합니다.",
-        ],
-        ["image_processing", "이미지 검사·썸네일·미리보기 생성 중"],
-        ["voice_reference_validation", "참조 음성 검증·정규화 중"],
-        ["tts_loading_and_synthesis", "목소리 모델 로딩·음성 생성 중"],
-        ["ocr_normalizing", "인식용 이미지 준비 중"],
-        ["ocr_recognizing", "이미지 문자 인식 중"],
-        ["stt_probing", "음성 정보·길이 확인 중"],
-        ["stt_normalizing", "음성 인식용 입력 변환 중"],
-        ["stt_transcribing", "음성 모델 로딩·텍스트 인식 중"],
-        [
-          "waiting_native_compute",
-          "다른 연산이 자원을 사용 중입니다. 종료 확인 후 시작합니다.",
-        ],
-        ["waiting_compute", "공통 실행 자원 배정을 기다리고 있습니다."],
-        ["packaging", "결과 묶음 생성 중"],
-      ]).get(job.stage);
+  const pdfProgress = /^pdf_pages_(\d+)_of_(\d+)$/.exec(job.stage);
+
+  const stageLabel = pdfProgress
+    ? `PDF ${pdfProgress[1]} / ${pdfProgress[2]}페이지 처리 완료`
+    : job.stage.startsWith("encoding_")
+      ? `${job.stage.slice(9)} 영상 변환 중`
+      : new Map([
+          ["thumbnail", "썸네일 생성 중"],
+          ["probing", "영상 정보 분석 중"],
+          ["reserving", "결과 저장 공간 예약 중"],
+          [
+            "cpu_fallback",
+            "하드웨어 가속을 사용할 수 없어 CPU로 전환 중입니다.",
+          ],
+          [
+            "waiting_hardware_encoder",
+            "다른 작업이 하드웨어 인코더를 사용 중입니다. 종료 후 시작합니다.",
+          ],
+          ["image_processing", "이미지 검사·썸네일·미리보기 생성 중"],
+          ["voice_reference_validation", "참조 음성 검증·정규화 중"],
+          ["tts_loading_and_synthesis", "목소리 모델 로딩·음성 생성 중"],
+          ["pdf_reading", "PDF 열기·페이지 확인 중"],
+          ["ocr_normalizing", "인식용 이미지 준비 중"],
+          ["ocr_recognizing", "이미지 문자 인식 중"],
+          ["stt_probing", "음성 정보·길이 확인 중"],
+          ["stt_normalizing", "음성 인식용 입력 변환 중"],
+          ["stt_transcribing", "음성 모델 로딩·텍스트 인식 중"],
+          [
+            "waiting_native_compute",
+            "다른 연산이 자원을 사용 중입니다. 종료 확인 후 시작합니다.",
+          ],
+          ["waiting_compute", "공통 실행 자원 배정을 기다리고 있습니다."],
+          ["packaging", "결과 묶음 생성 중"],
+        ]).get(job.stage);
 
   const available =
     job.result_state === "available" &&
@@ -360,6 +369,7 @@ function Details({
                 />
               </>
             )}
+            {job.kind === "pdf.extract" && <PdfResult jobId={job.id} />}
             {job.kind === "ocr.recognize" && <OcrResult jobId={job.id} />}
             {job.kind === "stt.transcribe" && (
               <TranscriptResult jobId={job.id} />
@@ -369,6 +379,7 @@ function Details({
               !imagePackage.success &&
               job.kind !== "stt.transcribe" &&
               job.kind !== "ocr.recognize" &&
+              job.kind !== "pdf.extract" &&
               job.result !== null &&
               job.result !== undefined && (
                 <pre className="json-result">
@@ -379,7 +390,8 @@ function Details({
               {imagePackage.success ||
               videoPackage.success ||
               job.kind === "stt.transcribe" ||
-              job.kind === "ocr.recognize"
+              job.kind === "ocr.recognize" ||
+              job.kind === "pdf.extract"
                 ? "전체 ZIP 다운로드"
                 : "결과 다운로드"}
             </a>
@@ -446,6 +458,7 @@ function NewTask({
     retryJob?.options?.language_correction ?? true,
   );
 
+  const [pdfMode, setPdfMode] = useState<string>(retryJob?.options?.mode ?? "auto");
   const [useItn, setUseItn] = useState(retryJob?.options?.use_itn ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -454,6 +467,7 @@ function NewTask({
   const service = services.find((item) => item.kind === kind);
 
   const imageLimit =
+    service?.pdf_limits?.max_input_bytes ??
     service?.ocr_limits?.max_input_bytes ??
     service?.image_limits?.max_input_bytes ??
     200_000_000;
@@ -507,11 +521,11 @@ function NewTask({
     }
 
     if (
-      ["ocr.recognize", "image.package"].includes(kind) &&
+      ["ocr.recognize", "image.package", "pdf.extract"].includes(kind) &&
       file.size > imageLimit
     ) {
       setError(
-        `입력 이미지는 최대 ${imageLimitMb}MB입니다. 크기를 줄인 뒤 다시 선택해 주세요.`,
+        `${kind === "pdf.extract" ? "PDF 파일은" : "입력 이미지는"} 최대 ${imageLimitMb}MB입니다. 크기를 줄인 뒤 다시 선택해 주세요.`,
       );
 
       return;
@@ -540,11 +554,13 @@ function NewTask({
             options:
               kind === "image.package"
                 ? {}
-                : kind === "ocr.recognize"
-                  ? { language, language_correction: correction }
-                  : kind === "stt.transcribe"
-                    ? { language, use_itn: useItn }
-                    : { seconds },
+                : kind === "pdf.extract"
+                  ? { mode: pdfMode, language, language_correction: correction }
+                  : kind === "ocr.recognize"
+                    ? { language, language_correction: correction }
+                    : kind === "stt.transcribe"
+                      ? { language, use_itn: useItn }
+                      : { seconds },
           }),
         ),
       );
@@ -625,9 +641,11 @@ function NewTask({
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder={
-                kind === "stt.transcribe"
-                  ? "예: 회의 음성 인식"
-                  : "예: 소개 영상 미리보기 생성"
+                kind === "pdf.extract"
+                  ? "예: 스캔 문서 텍스트 추출"
+                  : kind === "stt.transcribe"
+                    ? "예: 회의 음성 인식"
+                    : "예: 소개 영상 미리보기 생성"
               }
             />
           </label>
@@ -665,22 +683,26 @@ function NewTask({
         )}
         {service?.input_type === "upload" && (
           <label>
-            {["image.package", "ocr.recognize"].includes(kind)
-              ? "입력 이미지"
-              : kind === "stt.transcribe"
-                ? "입력 음성·영상"
-                : "입력 영상"}
+            {kind === "pdf.extract"
+              ? "입력 PDF"
+              : ["image.package", "ocr.recognize"].includes(kind)
+                ? "입력 이미지"
+                : kind === "stt.transcribe"
+                  ? "입력 음성·영상"
+                  : "입력 영상"}
             <input
               key={kind}
               disabled={submitted}
               type="file"
               required
               accept={
-                ["image.package", "ocr.recognize"].includes(kind)
-                  ? ".png,.jpg,.jpeg,.jfif,.gif,.webp,.bmp,.ico,.tif,.tiff,.heic,.heif,.avif"
-                  : kind === "stt.transcribe"
-                    ? ".wav,.mp3,.flac,.ogg,.m4a,.mp4,.mov,.webm,.mkv,.aac,.aiff"
-                    : "video/mp4,video/quicktime,video/webm,video/x-matroska"
+                kind === "pdf.extract"
+                  ? ".pdf"
+                  : ["image.package", "ocr.recognize"].includes(kind)
+                    ? ".png,.jpg,.jpeg,.jfif,.gif,.webp,.bmp,.ico,.tif,.tiff,.heic,.heif,.avif"
+                    : kind === "stt.transcribe"
+                      ? ".wav,.mp3,.flac,.ogg,.m4a,.mp4,.mov,.webm,.mkv,.aac,.aiff"
+                      : "video/mp4,video/quicktime,video/webm,video/x-matroska"
               }
               onChange={(event) => setFile(event.target.files?.item(0) ?? null)}
             />
@@ -700,7 +722,7 @@ function NewTask({
             />
           </label>
         )}
-        {kind === "ocr.recognize" && (
+        {["ocr.recognize", "pdf.extract"].includes(kind) && (
           <>
             <label>
               인식 언어
@@ -737,6 +759,21 @@ function NewTask({
               </select>
             </label>
           </>
+        )}
+        {kind === "pdf.extract" && (
+          <label>
+            추출 방식
+            <select
+              aria-label="추출 방식"
+              disabled={submitted}
+              value={pdfMode}
+              onChange={(event) => setPdfMode(event.target.value)}
+            >
+              <option value="auto">자동 · 텍스트 없으면 OCR</option>
+              <option value="ocr">모든 페이지 OCR</option>
+              <option value="text">내장 텍스트만 추출</option>
+            </select>
+          </label>
         )}
         {kind === "stt.transcribe" && (
           <>
@@ -777,6 +814,16 @@ function NewTask({
           </>
         )}
       </div>
+      {kind === "pdf.extract" && (
+        <p>
+          PDF 최대 {imageLimitMb}MB · 최대{" "}
+          {service?.pdf_limits?.max_pages ?? 100}페이지 · 처리 제한{" "}
+          {(service?.pdf_limits?.timeout_seconds ?? 900) / 60}분. 암호화 PDF는
+          지원하지 않습니다. 자동 모드는 페이지에 내장 텍스트가 있으면 추출하고
+          없으면 OCR로 인식합니다. 표·서식은 복원하지 않으며 원본은 작업 종료 후
+          정리됩니다.
+        </p>
+      )}
       {kind === "image.package" && (
         <p>
           이미지 최대 {imageLimitMb}MB·4천만 화소. 첫 프레임을 사용하고 원본은

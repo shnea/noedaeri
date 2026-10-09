@@ -43,6 +43,9 @@ class Settings:
     ocr_enabled: bool = False
     ocr_timeout: int = 120
     image_input_limit: int = 200_000_000
+    pdf_input_limit: int = 200_000_000
+    pdf_max_pages: int = 100
+    pdf_timeout: int = 900
     stt_enabled: bool = False
     stt_timeout: int = 900
     stt_max_duration: int = 3600
@@ -69,6 +72,9 @@ class Settings:
             ocr_enabled=os.environ.get("OCR_ENABLED", "0") == "1",
             ocr_timeout=int(os.environ.get("OCR_TIMEOUT_SECONDS", "120")),
             image_input_limit=int(os.environ.get("IMAGE_MAX_INPUT_BYTES", "200000000")),
+            pdf_input_limit=int(os.environ.get("PDF_MAX_INPUT_BYTES", "200000000")),
+            pdf_max_pages=int(os.environ.get("PDF_MAX_PAGES", "100")),
+            pdf_timeout=int(os.environ.get("PDF_TIMEOUT_SECONDS", "900")),
             stt_enabled=os.environ.get("STT_ENABLED", "0") == "1",
             stt_timeout=int(os.environ.get("STT_TIMEOUT_SECONDS", "900")),
             stt_max_duration=int(os.environ.get("STT_MAX_DURATION_SECONDS", "3600")),
@@ -162,6 +168,12 @@ class Settings:
             raise ValueError("Storage capacity must exceed the positive upload limit")
         if not 1 <= settings.image_input_limit <= 5 * 1024**3:
             raise ValueError("Image input limit must be between 1 byte and 5 GiB")
+        if not (
+            1 <= settings.pdf_input_limit <= 5 * 1024**3
+            and 1 <= settings.pdf_max_pages <= 500
+            and 30 <= settings.pdf_timeout <= 7200
+        ):
+            raise ValueError("Invalid PDF execution limits")
         if not 30 <= settings.ocr_timeout <= 600:
             raise ValueError("OCR timeout must be between 30 and 600 seconds")
         if settings.integration_key and len(settings.integration_key) < 32:

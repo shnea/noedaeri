@@ -21,7 +21,7 @@ from .media import (
     thumbnail,
     video_package,
 )
-from .ocr import recognize
+from .ocr import extract_pdf, recognize
 from .storage import Storage
 from .stt import transcribe
 from .tts import normalize_reference, synthesize
@@ -54,7 +54,7 @@ def run():
                         "kinds": ["video.thumbnail", "video.package", "image.package"]
                         + (["tts.synthesize", "tts.voice.register"] if settings.tts_enabled else [])
                         + (["stt.transcribe"] if settings.stt_enabled else [])
-                        + (["ocr.recognize"] if settings.ocr_enabled else []),
+                        + (["ocr.recognize", "pdf.extract"] if settings.ocr_enabled else []),
                     },
                 )
                 response.raise_for_status()
@@ -226,6 +226,8 @@ def execute_job(settings, storage, job, client, lease, source, output, alive, st
             settings.job_timeout,
             alive,
         )
+    elif job["kind"] == "pdf.extract":
+        result = extract_pdf(settings, storage, job, alive, stage, reserve)
     elif job["kind"] == "ocr.recognize":
         result = recognize(settings, storage, job, alive, stage, reserve)
     elif job["kind"] == "stt.transcribe":

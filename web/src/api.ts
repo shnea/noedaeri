@@ -23,6 +23,7 @@ export const jobSchema = z.object({
   output_reserved: z.number().optional(),
   options: z
     .object({
+      mode: z.enum(["auto", "ocr", "text"]).optional(),
       seconds: z.number().optional(),
       language: z.string().optional(),
       use_itn: z.boolean().optional(),
@@ -49,6 +50,15 @@ export const jobSchema = z.object({
 });
 
 export const serviceSchema = z.object({
+  pdf_limits: z
+    .object({
+      max_input_bytes: z.number(),
+      max_pages: z.number(),
+      timeout_seconds: z.number(),
+      processing_dimension: z.number(),
+    })
+    .nullable()
+    .optional(),
   image_limits: z
     .object({
       max_input_bytes: z.number(),
@@ -350,6 +360,10 @@ const messages = new Map(
     unsupported_media: "지원 형식과 입력 길이를 확인해 주세요.",
     tts_not_configured:
       "TTS 설치와 연결 설정이 필요합니다. 관리자에게 확인해 주세요.",
+    pdf_encrypted:
+      "암호화된 PDF는 처리할 수 없습니다. 암호화를 해제한 사본으로 요청해 주세요.",
+    pdf_page_limit_exceeded:
+      "PDF 페이지 수가 한도를 초과했습니다. 문서를 나누어 요청해 주세요.",
     ocr_not_configured:
       "OCR 엔진이 준비되지 않았습니다. 관리자에게 설치 상태를 확인해 주세요.",
     ocr_recognition_failed:

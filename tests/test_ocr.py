@@ -70,7 +70,8 @@ def test_ocr_catalog_validation_idempotency_and_access(app, monkeypatch):
     assert create_ocr(client).status_code == 503
 
 
-def test_ocr_callback_result_receipt(app, monkeypatch):
+@pytest.mark.parametrize("kind", ["ocr.recognize", "pdf.extract"])
+def test_ocr_callback_result_receipt(app, monkeypatch, kind):
     from test_integration import platform
 
     monkeypatch.setattr("noedaeri.api.runtime_ready", lambda: True)
@@ -79,10 +80,13 @@ def test_ocr_callback_result_receipt(app, monkeypatch):
     response = client.post(
         "/api/v1/jobs",
         json={
-            "kind": "ocr.recognize",
+            "kind": kind,
             "title": "외부 문자 인식",
             "idempotency_key": str(uuid4()),
-            "input": {"type": "upload", "extension": "png"},
+            "input": {
+                "type": "upload",
+                **({"extension": "png"} if kind == "ocr.recognize" else {}),
+            },
             "options": {"language": "ko"},
         },
     )
@@ -96,8 +100,9 @@ def test_ocr_callback_result_receipt(app, monkeypatch):
         ).status_code
         == 200
     )
-    claimed = app.state.queue.claim(uuid4(), ["ocr.recognize"])
-    names = ["text.json", "text.txt", "text.zip"]
+    claimed = app.state.queue.claim(uuid4(), [kind])
+    base = "text" if kind == "ocr.recognize" else "document"
+    names = [base + suffix for suffix in (".json", ".txt", ".zip")]
     for name in names:
         path = app.state.storage.path("results", key, name)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -106,13 +111,13 @@ def test_ocr_callback_result_receipt(app, monkeypatch):
     payload = {
         "token": str(claimed["lease_token"]),
         "status": "succeeded",
-        "result": {"type": "ocr_recognize", "files": names, "line_count": 1},
+        "result": {"type": kind.replace(".", "_"), "files": names, "line_count": 1},
     }
-    (path.parent / "text.txt").unlink()
+    (path.parent / (base + ".txt")).unlink()
     assert (
         client.post(f"/internal/jobs/{key}/finish", headers=worker, json=payload).status_code == 409
     )
-    (path.parent / "text.txt").write_bytes(b"fixture")
+    (path.parent / (base + ".txt")).write_bytes(b"fixture")
     assert (
         client.post(f"/internal/jobs/{key}/finish", headers=worker, json=payload).status_code == 200
     )
@@ -131,7 +136,7 @@ def test_ocr_callback_result_receipt(app, monkeypatch):
     assert client.get(f"/api/v1/jobs/{key}/result").status_code == 410
 
 
-@pytest.mark.parametrize("kind", ["ocr.recognize", "image.package"])
+@pytest.mark.parametrize("kind", ["ocr.recognize", "image.package", "pdf.extract"])
 def test_ocr_upload_specific_limit_and_retry(app, monkeypatch, kind):
     from fastapi.testclient import TestClient
 
@@ -143,6 +148,7 @@ def test_ocr_upload_specific_limit_and_retry(app, monkeypatch, kind):
             app.state.settings,
             ocr_enabled=True,
             image_input_limit=32_000_000,
+            pdf_input_limit=32_000_000,
             upload_limit=33_000_000,
             storage_limit=128 * 1024**2,
         )
@@ -156,12 +162,21 @@ def test_ocr_upload_specific_limit_and_retry(app, monkeypatch, kind):
                 "kind": kind,
                 "title": "이미지 한도 검수",
                 "idempotency_key": str(uuid4()),
-                "input": {"type": "upload", "extension": "png"},
+                "input": {
+                    "type": "upload",
+                    **({"extension": "png"} if kind != "pdf.extract" else {}),
+                },
                 "options": {},
             },
         ).json()
         row = next(row for row in client.get("/api/services").json() if row["kind"] == kind)
-        limits = row["ocr_limits"] if kind == "ocr.recognize" else row["image_limits"]
+        limits = (
+            row["pdf_limits"]
+            if kind == "pdf.extract"
+            else row["ocr_limits"]
+            if kind == "ocr.recognize"
+            else row["image_limits"]
+        )
         assert limits["max_input_bytes"] == 32_000_000
         url = f"/api/jobs/{job['id']}/input"
         response = client.put(
