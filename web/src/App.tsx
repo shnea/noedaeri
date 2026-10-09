@@ -116,6 +116,7 @@ function Details({
           ["pdf_reading", "PDF 열기·페이지 확인 중"],
           ["ocr_normalizing", "인식용 이미지 준비 중"],
           ["ocr_recognizing", "이미지 문자 인식 중"],
+          ["subtitle_exporting", "SRT·VTT 자막 생성 중"],
           ["stt_probing", "음성 정보·길이 확인 중"],
           ["stt_normalizing", "음성 인식용 입력 변환 중"],
           ["stt_transcribing", "음성 모델 로딩·텍스트 인식 중"],
@@ -371,13 +372,17 @@ function Details({
             )}
             {job.kind === "pdf.extract" && <PdfResult jobId={job.id} />}
             {job.kind === "ocr.recognize" && <OcrResult jobId={job.id} />}
-            {job.kind === "stt.transcribe" && (
-              <TranscriptResult jobId={job.id} />
+            {["stt.transcribe", "video.subtitles"].includes(job.kind) && (
+              <TranscriptResult
+                jobId={job.id}
+                subtitles={job.kind === "video.subtitles"}
+              />
             )}
             {!artifact.success &&
               !videoPackage.success &&
               !imagePackage.success &&
               job.kind !== "stt.transcribe" &&
+              job.kind !== "video.subtitles" &&
               job.kind !== "ocr.recognize" &&
               job.kind !== "pdf.extract" &&
               job.result !== null &&
@@ -389,7 +394,7 @@ function Details({
             <a className="button" href={`/api/jobs/${job.id}/result`} download>
               {imagePackage.success ||
               videoPackage.success ||
-              job.kind === "stt.transcribe" ||
+              ["stt.transcribe", "video.subtitles"].includes(job.kind) ||
               job.kind === "ocr.recognize" ||
               job.kind === "pdf.extract"
                 ? "전체 ZIP 다운로드"
@@ -458,7 +463,10 @@ function NewTask({
     retryJob?.options?.language_correction ?? true,
   );
 
-  const [pdfMode, setPdfMode] = useState<string>(retryJob?.options?.mode ?? "auto");
+  const [pdfMode, setPdfMode] = useState<string>(
+    retryJob?.options?.mode ?? "auto",
+  );
+
   const [useItn, setUseItn] = useState(retryJob?.options?.use_itn ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -558,7 +566,7 @@ function NewTask({
                   ? { mode: pdfMode, language, language_correction: correction }
                   : kind === "ocr.recognize"
                     ? { language, language_correction: correction }
-                    : kind === "stt.transcribe"
+                    : ["stt.transcribe", "video.subtitles"].includes(kind)
                       ? { language, use_itn: useItn }
                       : { seconds },
           }),
@@ -643,7 +651,7 @@ function NewTask({
               placeholder={
                 kind === "pdf.extract"
                   ? "예: 스캔 문서 텍스트 추출"
-                  : kind === "stt.transcribe"
+                  : ["stt.transcribe", "video.subtitles"].includes(kind)
                     ? "예: 회의 음성 인식"
                     : "예: 소개 영상 미리보기 생성"
               }
@@ -687,7 +695,7 @@ function NewTask({
               ? "입력 PDF"
               : ["image.package", "ocr.recognize"].includes(kind)
                 ? "입력 이미지"
-                : kind === "stt.transcribe"
+                : ["stt.transcribe", "video.subtitles"].includes(kind)
                   ? "입력 음성·영상"
                   : "입력 영상"}
             <input
@@ -700,7 +708,7 @@ function NewTask({
                   ? ".pdf"
                   : ["image.package", "ocr.recognize"].includes(kind)
                     ? ".png,.jpg,.jpeg,.jfif,.gif,.webp,.bmp,.ico,.tif,.tiff,.heic,.heif,.avif"
-                    : kind === "stt.transcribe"
+                    : ["stt.transcribe", "video.subtitles"].includes(kind)
                       ? ".wav,.mp3,.flac,.ogg,.m4a,.mp4,.mov,.webm,.mkv,.aac,.aiff"
                       : "video/mp4,video/quicktime,video/webm,video/x-matroska"
               }
@@ -775,7 +783,7 @@ function NewTask({
             </select>
           </label>
         )}
-        {kind === "stt.transcribe" && (
+        {["stt.transcribe", "video.subtitles"].includes(kind) && (
           <>
             <label>
               인식 언어
@@ -839,12 +847,14 @@ function NewTask({
           PDF·표 구조 복원은 지원하지 않습니다. 입력은 작업 종료 후 정리됩니다.
         </p>
       )}
-      {kind === "stt.transcribe" && (
+      {["stt.transcribe", "video.subtitles"].includes(kind) && (
         <p>
           음성 또는 음성이 포함된 영상의 첫 오디오 트랙을 인식합니다.
           {service?.limits &&
             ` 최대 ${service.limits.max_duration_seconds / 60}분 · 처리 제한 ${service.limits.timeout_seconds / 60}분 · CPU ${service.limits.cpu_threads}스레드.`}
           결과는 텍스트와 구간별 시각이며, 입력은 작업 종료 후 정리됩니다.
+          {kind === "video.subtitles" &&
+            " SRT·VTT 자막도 생성합니다. 자막 시각은 음성 구간을 나눈 근사값이며, 단어별 정렬·화자 구분·영상에 자막 입히기는 제공하지 않습니다."}
         </p>
       )}
       <p>웹 테스트 결과는 생성 완료 후 24시간 보관됩니다.</p>

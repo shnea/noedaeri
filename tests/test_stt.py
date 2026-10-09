@@ -15,11 +15,11 @@ from noedaeri.storage import Storage
 from noedaeri.stt import transcribe
 
 
-def create_stt(client, key=None, options=None):
+def create_stt(client, key=None, options=None, kind="stt.transcribe"):
     return client.post(
         "/api/jobs",
         json={
-            "kind": "stt.transcribe",
+            "kind": kind,
             "title": "음성 인식 검수",
             "idempotency_key": str(key or uuid4()),
             "input": {"type": "upload"},
@@ -28,24 +28,28 @@ def create_stt(client, key=None, options=None):
     )
 
 
-def test_stt_catalog_validation_and_idempotency(app):
+@pytest.mark.parametrize(
+    "kind,service", [("stt.transcribe", "stt"), ("video.subtitles", "subtitles")]
+)
+def test_stt_catalog_validation_and_idempotency(app, kind, service):
     client, _ = login(app)
     catalog = {row["kind"]: row for row in client.get("/api/services").json()}
-    assert catalog["stt.transcribe"]["available"] is False
-    assert create_stt(client).status_code == 503
+    assert catalog[kind]["available"] is False
+    assert create_stt(client, kind=kind).status_code == 503
     app.state.settings = replace(app.state.settings, stt_enabled=True)
-    assert create_stt(client, options={"language": "de"}).status_code == 422
-    assert create_stt(client, options={"seconds": 0}).status_code == 422
+    assert create_stt(client, kind=kind, options={"language": "de"}).status_code == 422
+    assert create_stt(client, kind=kind, options={"seconds": 0}).status_code == 422
     key = uuid4()
-    first = create_stt(client, key).json()
+    first = create_stt(client, key, kind=kind).json()
     assert first["options"] == {"language": "auto", "use_itn": True}
-    assert create_stt(client, key).json()["id"] == first["id"]
-    assert create_stt(client, key, {"language": "ko"}).status_code == 409
-    items = client.get("/api/tasks?service=stt").json()
-    assert items[0]["id"] == first["id"] and items[0]["service"] == "stt"
+    assert create_stt(client, key, kind=kind).json()["id"] == first["id"]
+    assert create_stt(client, key, {"language": "ko"}, kind=kind).status_code == 409
+    items = client.get(f"/api/tasks?service={service}").json()
+    assert items[0]["id"] == first["id"] and items[0]["service"] == service
 
 
-def test_stt_callback_result_receipt(app):
+@pytest.mark.parametrize("kind", ["stt.transcribe", "video.subtitles"])
+def test_stt_callback_result_receipt(app, kind):
     from test_integration import platform
 
     app.state.settings = replace(app.state.settings, stt_enabled=True)
@@ -53,7 +57,7 @@ def test_stt_callback_result_receipt(app):
     response = client.post(
         "/api/v1/jobs",
         json={
-            "kind": "stt.transcribe",
+            "kind": kind,
             "title": "외부 음성 인식",
             "input": {"type": "upload"},
             "options": {"language": "ko"},
@@ -69,8 +73,18 @@ def test_stt_callback_result_receipt(app):
         ).status_code
         == 200
     )
-    claimed = app.state.queue.claim(uuid4(), ["stt.transcribe"])
-    names = ["transcript.json", "transcript.txt", "transcript.zip"]
+    claimed = app.state.queue.claim(uuid4(), [kind])
+    names = (
+        ["transcript.json", "transcript.txt", "transcript.zip"]
+        if kind == "stt.transcribe"
+        else [
+            "transcript.json",
+            "transcript.txt",
+            "subtitles.srt",
+            "subtitles.vtt",
+            "subtitles.zip",
+        ]
+    )
     for name in names:
         path = app.state.storage.path("results", key, name)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,10 +96,17 @@ def test_stt_callback_result_receipt(app):
         json={
             "token": str(claimed["lease_token"]),
             "status": "succeeded",
-            "result": {"type": "stt_transcribe", "files": names, "segment_count": 1},
+            "result": {"type": kind.replace(".", "_"), "files": names, "segment_count": 1},
         },
     )
     assert finished.status_code == 200
+    if kind == "video.subtitles":
+        assert (
+            client.get(f"/api/v1/jobs/{key}/files/subtitles.vtt")
+            .headers["content-type"]
+            .startswith("text/vtt")
+        )
+        assert client.get(f"/api/v1/jobs/{key}/result").headers["content-type"] == "application/zip"
     app.state.webhooks.collect()
     assert app.state.webhooks.dispatch_one()
     job = client.get(f"/api/v1/jobs/{key}").json()

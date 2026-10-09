@@ -21,7 +21,13 @@ function timestamp(seconds: number) {
   return `${minutes}:${((tenths % 600) / 10).toFixed(1).padStart(4, "0")}`;
 }
 
-export function TranscriptResult({ jobId }: { jobId: string }) {
+export function TranscriptResult({
+  jobId,
+  subtitles = false,
+}: {
+  jobId: string;
+  subtitles?: boolean;
+}) {
   const [data, setData] = useState<z.infer<typeof transcriptSchema> | null>(
     null,
   );
@@ -65,7 +71,9 @@ export function TranscriptResult({ jobId }: { jobId: string }) {
   return (
     <div className="transcript-result">
       <p>
-        음성 구간 기준 시각입니다. 단어별 정렬과 화자 구분은 제공하지 않습니다.
+        {subtitles
+          ? "자막 시각은 음성 구간을 문자 수에 비례해 나눈 근사값입니다. 아래는 원래 인식 구간이며 SRT·VTT와 경계가 다를 수 있습니다. 단어별 정렬·화자 구분은 제공하지 않습니다."
+          : "음성 구간 기준 시각입니다. 단어별 정렬과 화자 구분은 제공하지 않습니다."}
       </p>
       {error ? (
         <div role="alert">
@@ -86,7 +94,12 @@ export function TranscriptResult({ jobId }: { jobId: string }) {
           {data.segments.length === 0 ? (
             <p>인식된 음성이 없습니다. 무음 또는 입력 상태를 확인해 주세요.</p>
           ) : (
-            <div className="transcript-segments" aria-label="음성 인식 결과">
+            <div
+              className="transcript-segments"
+              role="region"
+              tabIndex={0}
+              aria-label="음성 인식 결과"
+            >
               {data.segments
                 .slice(page * 50, (page + 1) * 50)
                 .map((segment, index) => (
@@ -125,6 +138,17 @@ export function TranscriptResult({ jobId }: { jobId: string }) {
         <p role="status">인식 결과를 불러오는 중입니다.</p>
       )}
       <div className="guide-actions">
+        {subtitles &&
+          ["srt", "vtt"].map((extension) => (
+            <a
+              key={extension}
+              className="button"
+              href={base + "subtitles." + extension}
+              download={"subtitles." + extension}
+            >
+              {extension.toUpperCase()} 자막 다운로드
+            </a>
+          ))}
         <a
           className="button"
           href={base + "transcript.txt"}

@@ -1,6 +1,32 @@
 # 뇌대리 서비스 연동 지침
 
-문서 버전: 23 · 기준일: 2026-10-10
+문서 버전: 24 · 기준일: 2026-10-10
+
+## 영상 자막 · SRT/VTT
+
+`video.subtitles`는 기존 SenseVoiceSmall STT를 재사용하는 공통 파일 Job이다.
+새 모델이나 n8n 단계 없이 같은 연산 슬롯을 사용한다.
+
+| 항목 | 계약 |
+|---|---|
+| 접수 | 전용 키로 `POST /api/v1/jobs`, `kind:"video.subtitles"`, `input:{"type":"upload"}` → 입력 바이너리 PUT. 웹은 승인 세션·CSRF |
+| 옵션 | `language`: auto/ko/en/ja/zh/yue, `use_itn`: true 기본. STT와 동일 |
+| 입력·한도 | 음성·영상 첫 오디오 트랙. 공통 5GiB·기본 3,600초·전체 처리 900초·CPU 4스레드. `STT_*` 암호화 설정 공유, `/services`의 limits 확인 |
+| 진행 | stt_probing → stt_normalizing → stt_transcribing → subtitle_exporting → packaging. 취소·점유 만료·시간 초과는 기존 처리 |
+| 결과 | `transcript.json`, `transcript.txt`, `subtitles.srt`, `subtitles.vtt`, 기본 전체 `subtitles.zip`. `/jobs/{id}/files/{name}` 또는 `/jobs/{id}/result`. VTT text/vtt, SRT application/x-subrip, UTF-8 |
+| 자막 시각 | VAD 음성 구간을 문자 수에 비례해 나눈 **근사 시각**. 최대 6초·42자씩 최대 2줄. 원본 JSON 구간과 자막 경계가 다를 수 있음. 단어별 정렬·화자 구분·자막 입히기·번역 없음 |
+| 실패·빈 결과 | STT와 같은 오류 코드. 무음은 cue_count=0·빈 SRT·WEBVTT 헤더로 성공. 오디오 없는 영상·원격 플레이리스트 거부. 각 SRT/VTT 4MiB·100,000개 자막 제한 |
+| 완료·보존 | 기존 서명 완료 웹훅 → 플랫폼 파일 다운로드·저장 → receipt. 본문은 웹훅에 없음. 웹 24시간, 플랫폼 receipt 또는 기본 최대 7일. 입력·중간 파일 정리, 작업 이력 유지 |
+| 웹 | 서비스에서 작업 만들기, 공통 작업 목록의 상태·취소·음성 구간·SRT/VTT/TXT/JSON/ZIP 다운로드·만료 확인 |
+
+```json
+{"kind":"video.subtitles","title":"영상 자막 생성","idempotency_key":"<새 UUID>",
+ "input":{"type":"upload"},"options":{"language":"ko","use_itn":true}}
+```
+
+완료 메타데이터는 `type:"video_subtitles"`, `timing:"vad_proportional"`, `cue_count`,
+STT 모델/길이/구간 수와 `files`를 포함한다. 실제 발화와 자막 경계를 검수한 뒤 사용한다.
+설치·검수 범위: [자막 런타임 기록](https://github.com/shnea/noedaeri/blob/main/docs/SUBTITLES_RUNTIME.md).
 
 ## PDF 텍스트 추출 · 스캔 OCR
 
@@ -289,6 +315,7 @@ Raya·임베딩·벡터 검색 HTTP 노드의 `X-Noedaeri-Compute-Token` 헤더�
 | 목소리 등록·관리 | `/api/v1/voices` | 기본 목소리·참조 음성 등록, 조회·이름 수정·삭제, 요청자 범위 확인 |
 | 음성 생성 | `tts.synthesize` | Qwen3-TTS 1.7B 8bit, Job 큐·WAV·서명 완료 알림·웹 테스트 |
 | PDF 텍스트 추출 | `pdf.extract` | PDFKit 내장 텍스트·페이지별 Vision OCR·TXT/JSON/ZIP·Job·완료 알림·웹 테스트 |
+| 영상 자막 | `video.subtitles` | STT 재사용·근사 구간 SRT/VTT·TXT/JSON/ZIP·Job·완료 알림·웹 테스트 |
 | 음성 인식 | `stt.transcribe` | SenseVoice INT8·Silero VAD·텍스트/구간 JSON/ZIP·Job·서명 완료 알림·웹 테스트 |
 | 이미지 통합 처리 | `image.package` | JPEG 썸네일·WebP 미리보기·ZIP 생성 가능 |
 | 영상 썸네일 | `video.thumbnail` | 웹 요청·결과 다운로드 가능 |

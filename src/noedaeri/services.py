@@ -102,6 +102,9 @@ class Service:
 
 
 SERVICES = {
+    "video.subtitles": Service(
+        "video.subtitles", "subtitles", "영상 자막 · SRT + VTT", "upload", TranscriptionOptions
+    ),
     "pdf.extract": Service(
         "pdf.extract",
         "pdf",
@@ -196,7 +199,7 @@ def service_catalog(settings):
             if item.service == "tts"
             else (
                 settings.stt_enabled
-                if item.service == "stt"
+                if item.service in {"stt", "subtitles"}
                 else settings.ocr_enabled and runtime_ready()
                 if item.service in {"ocr", "pdf"}
                 else True
@@ -230,7 +233,7 @@ def service_catalog(settings):
                 "timeout_seconds": settings.stt_timeout,
                 "cpu_threads": settings.stt_threads,
             }
-            if item.service == "stt"
+            if item.service in {"stt", "subtitles"}
             else None,
         }
         for item in SERVICES.values()

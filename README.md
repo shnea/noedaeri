@@ -200,3 +200,6 @@ DB 검사는 로컬 소켓만 사용하는 일회성 PostgreSQL을 띄운 뒤 �
 전용 키 API·서명 완료 웹훅·저장 완료 확인을 제공한다. 계약은 [연동 지침](docs/SERVICE_INTEGRATION.md), 서버 예제는 [platform_client.py](examples/platform_client.py)에 있다. 공개 진입점은 `/integrations/SERVICE_INTEGRATION.md`, API 명세는 `/integrations/openapi.json`이다.
 
 `.venv/bin/python scripts/configure_platform.py init`으로 없는 전용 키를 암호화 생성한다. 플랫폼의 HTTPS 수신 서버가 준비되면 `.venv/bin/python scripts/configure_platform.py webhook`을 실행해 숨김 입력하고 네이티브 서비스를 재시작한다. 실제 값은 코드·Git 평문에 넣지 않는다. 수신 주소가 없으면 플랫폼 작업 접수는 503이며 웹 테스트는 계속 사용할 수 있다.
+
+영상 자막은 `video.subtitles`로 STT 런타임을 재사용해 SRT·VTT를 생성한다.
+시각은 VAD 구간의 근사 분할이며 단어별 정렬이 아니다. [실행·검수 기록](docs/SUBTITLES_RUNTIME.md).

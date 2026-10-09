@@ -451,7 +451,10 @@ def create_app(settings: Settings | None = None):
             not getattr(app.state, "settings", settings).ocr_enabled or not runtime_ready()
         ):
             raise HTTPException(503, "ocr_not_configured")
-        if service.service == "stt" and not getattr(app.state, "settings", settings).stt_enabled:
+        if (
+            service.service in {"stt", "subtitles"}
+            and not getattr(app.state, "settings", settings).stt_enabled
+        ):
             raise HTTPException(503, "stt_not_configured")
         try:
             options = service.options.model_validate(data.options).model_dump(mode="json")
@@ -630,6 +633,7 @@ def create_app(settings: Settings | None = None):
             "video.package",
             "image.package",
             "stt.transcribe",
+            "video.subtitles",
             "ocr.recognize",
             "pdf.extract",
         }:
@@ -640,6 +644,7 @@ def create_app(settings: Settings | None = None):
                     "image.package": "image.zip",
                     "video.package": "video.zip",
                     "stt.transcribe": "transcript.zip",
+                    "video.subtitles": "subtitles.zip",
                     "ocr.recognize": "text.zip",
                     "pdf.extract": "document.zip",
                 }[job["kind"]]
@@ -659,6 +664,8 @@ def create_app(settings: Settings | None = None):
                 ".webp": "image/webp",
                 ".json": "application/json",
                 ".txt": "text/plain; charset=utf-8",
+                ".srt": "application/x-subrip; charset=utf-8",
+                ".vtt": "text/vtt; charset=utf-8",
                 ".zip": "application/zip",
             }.get(path.suffix)
             return FileResponse(
@@ -785,6 +792,7 @@ def create_app(settings: Settings | None = None):
                 "video.package",
                 "image.package",
                 "stt.transcribe",
+                "video.subtitles",
                 "ocr.recognize",
                 "pdf.extract",
             }:
@@ -798,6 +806,14 @@ def create_app(settings: Settings | None = None):
                     if job["kind"] == "image.package"
                     else {"transcript.json", "transcript.txt", "transcript.zip"}
                     if job["kind"] == "stt.transcribe"
+                    else {
+                        "transcript.json",
+                        "transcript.txt",
+                        "subtitles.srt",
+                        "subtitles.vtt",
+                        "subtitles.zip",
+                    }
+                    if job["kind"] == "video.subtitles"
                     else {"document.json", "document.txt", "document.zip"}
                     if job["kind"] == "pdf.extract"
                     else {"text.json", "text.txt", "text.zip"}

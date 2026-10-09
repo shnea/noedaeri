@@ -60,7 +60,8 @@ button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
-.pdf-page-text:focus-visible {
+.pdf-page-text:focus-visible,
+.transcript-segments:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
@@ -1083,4 +1084,8 @@ main {
   display: block;
   color: var(--muted);
   margin-top: 4px;
+}
+
+.transcript-segments + .guide-actions {
+  margin-top: 12px;
 }
